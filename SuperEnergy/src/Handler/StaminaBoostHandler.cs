@@ -1,20 +1,26 @@
-﻿using UnityEngine;
+﻿using Dinwlooc.Common.Bridge;
+using Dinwlooc.Common.src.Bridge.IBridge;
+using UnityEngine;
 
 namespace SuperEnergy
 {
     public class StaminaBoostHandler : IEnergyHandler
     {
-        private readonly RepoGameBridge _bridge;
+        private readonly IPlayerBridge _playerBridge;
 
-        public StaminaBoostHandler(RepoGameBridge bridge) => _bridge = bridge;
+        public StaminaBoostHandler()
+        {
+            _playerBridge = BridgeLocator.Player;
+        }
 
         public void Process(bool isHost, float deltaTime)
         {
-            if (!SuperEnergy.EnableStaminaBoost?.Value ?? false) return;
-            int multiplier = SuperEnergy.StaminaMultiplier?.Value ?? 2;
+            var config = SuperEnergyConfig.Instance;
+            if (!config.EnableStaminaBoost.Value) return;
+            int multiplier = config.StaminaMultiplier.Value;
             if (multiplier <= 1) return;
 
-            var player = _bridge.GetLocalPlayer();
+            var player = _playerBridge.GetLocalPlayer();
             if (player == null || !player.isLocal) return;
             if (PlayerController.instance == null) return;
 

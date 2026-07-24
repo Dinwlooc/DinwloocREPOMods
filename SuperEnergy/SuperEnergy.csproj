@@ -33,6 +33,14 @@
     <PackageReference Include="R.E.P.O.GameLibs.Steam" Version="*-*" PrivateAssets="all" />
   </ItemGroup>
 
+  <!-- ========== 新增：引用 Dinwlooc 通用库 ========== -->
+  <ItemGroup>
+    <Reference Include="REPO_Dinwlooc_Lib">
+      <HintPath>$(ProjectDir)Libs\REPO_Dinwlooc_Lib.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
   <ItemGroup>
     <Compile Include="src\**\*.cs" />
   </ItemGroup>

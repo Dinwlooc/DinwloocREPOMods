@@ -1,26 +1,31 @@
-﻿using UnityEngine;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
+using Dinwlooc.Common.Bridge;
+using Dinwlooc.Common.src.Bridge.IBridge;
+using UnityEngine;
 
 namespace SuperEnergy
 {
     public class DeathHeadReviveHandler : IEnergyHandler
     {
-        private readonly RepoGameBridge _bridge;
+        private readonly IGameStateBridge _gameState;
         private readonly Dictionary<PlayerDeathHead, float> _timers = new();
 
-        public DeathHeadReviveHandler(RepoGameBridge bridge) => _bridge = bridge;
+        public DeathHeadReviveHandler()
+        {
+            _gameState = BridgeLocator.GameState;
+        }
 
         public void Process(bool isHost, float deltaTime)
         {
             if (!isHost) return;
-            if (!SuperEnergy.EnableDeathHeadRevive?.Value ?? false) return;
+            var config = SuperEnergyConfig.Instance;
+            if (!config.EnableDeathHeadRevive.Value) return;
 
-            int required = SuperEnergy.DeathHeadReviveTime?.Value ?? 30;
+            int required = config.DeathHeadReviveTime.Value;
             if (required < 0) return;
 
             var deathHeads = Object.FindObjectsByType<PlayerDeathHead>(FindObjectsSortMode.None);
 
-            // required == 0 立即复活
             if (required == 0)
             {
                 foreach (var head in deathHeads)
@@ -29,12 +34,10 @@ namespace SuperEnergy
                     if (head.spectated)
                         head.playerAvatar.Revive(false);
                 }
-                // 清除所有计时（因为已立即复活）
                 _timers.Clear();
                 return;
             }
 
-            // 清理无效头部：已销毁或玩家已复活（triggered == false）
             var toRemove = new List<PlayerDeathHead>();
             foreach (var kv in _timers)
             {
@@ -48,7 +51,6 @@ namespace SuperEnergy
             foreach (var key in toRemove)
                 _timers.Remove(key);
 
-            // 为所有被控制的头部累积时间（spectated == true）
             foreach (var head in deathHeads)
             {
                 if (head == null || head.playerAvatar == null) continue;

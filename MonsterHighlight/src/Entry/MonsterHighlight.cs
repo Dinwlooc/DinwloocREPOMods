@@ -18,7 +18,9 @@ namespace MonsterHighlight
         private void Awake()
         {
             Logger = base.Logger;
-            _config = new MonsterHighlightConfig(Config);
+            _config = MonsterHighlightConfig.Instance;
+            _config.Initialize(Config); // 绑定所有配置
+
             var enemyBridge = BridgeLocator.Enemy;
             var playerBridge = BridgeLocator.Player;
             var gameStateBridge = BridgeLocator.GameState;
@@ -33,7 +35,7 @@ namespace MonsterHighlight
 
         private void Start()
         {
-            if (_config.EnableMod.Value)
+            if (_config.Enabled.Value)
                 _controller.Start();
         }
 

@@ -1,4 +1,5 @@
 using Photon.Pun;
+using Dinwlooc.Common.src.Bridge.IBridge;
 using UnityEngine;
 
 namespace QuickReload
@@ -7,11 +8,15 @@ namespace QuickReload
     {
         private const int MaxRandomAttempts = 50;
 
-        private readonly RepoGameBridge _bridge;
+        private readonly IGameStateBridge _gameState;
+        private readonly ISaveLoadBridge _saveLoad;
+        private readonly INetworkBridge _network;
 
-        public QuickReloadService(RepoGameBridge bridge)
+        public QuickReloadService(IGameStateBridge gameState, ISaveLoadBridge saveLoad, INetworkBridge network)
         {
-            _bridge = bridge;
+            _gameState = gameState;
+            _saveLoad = saveLoad;
+            _network = network;
         }
 
         /// <summary>
@@ -19,7 +24,7 @@ namespace QuickReload
         /// </summary>
         public void ReloadCurrentScene()
         {
-            if (!_bridge.IsMasterClientOrSingleplayer())
+            if (!_gameState.IsMasterClientOrSingleplayer())
                 return;
 
             var rm = RunManager.instance;
@@ -64,7 +69,7 @@ namespace QuickReload
         /// </summary>
         public void GoToShop()
         {
-            if (!_bridge.IsMasterClientOrSingleplayer())
+            if (!_gameState.IsMasterClientOrSingleplayer())
                 return;
 
             var rm = RunManager.instance;
@@ -83,7 +88,7 @@ namespace QuickReload
             try
             {
                 QuickReload.Logger.LogInfo("Loading save before going to shop...");
-                _bridge.LoadCurrentSave();
+                _saveLoad.LoadCurrentSave();
 
                 ClearItemDictionary();
                 SyncAndCleanup();
@@ -99,25 +104,18 @@ namespace QuickReload
 
         // ---------- 私有辅助方法 ----------
 
-        /// <summary>
-        /// 商店/大厅重载：保存当前进度。
-        /// </summary>
         private void ReloadShopOrLobby()
         {
             QuickReload.Logger.LogInfo("Saving current progress...");
-            _bridge.SaveCurrentProgress();
+            _saveLoad.SaveCurrentProgress();
         }
 
-        /// <summary>
-        /// 关卡重载：加载存档、可选的随机切换关卡、通知其他客户端。
-        /// </summary>
         private void ReloadLevel(RunManager rm)
         {
             QuickReload.Logger.LogInfo("Loading save to restore initial state...");
-            _bridge.LoadCurrentSave();
+            _saveLoad.LoadCurrentSave();
 
-            // 随机切换到同类型关卡（如果启用）
-            bool random = QuickReload.ReloadRandomScene?.Value ?? false;
+            bool random = QuickReloadConfig.Instance.ReloadRandomScene.Value;
             if (random)
             {
                 Level target = GetRandomLevelOfSameType(rm, rm.levelCurrent);
@@ -128,7 +126,6 @@ namespace QuickReload
                 }
             }
 
-            // 通知其他客户端关卡变更
             if (PhotonNetwork.IsConnected && PhotonNetwork.InRoom)
             {
                 var pun = rm.GetComponent<RunManagerPUN>();
@@ -144,9 +141,6 @@ namespace QuickReload
             }
         }
 
-        /// <summary>
-        /// 清空 StatsManager 的 item 字典（修复电量显示问题）。
-        /// </summary>
         private void ClearItemDictionary()
         {
             if (StatsManager.instance != null)
@@ -157,12 +151,9 @@ namespace QuickReload
             }
         }
 
-        /// <summary>
-        /// 同步字典数据给其他客户端，并清理本地 RPC。
-        /// </summary>
         private void SyncAndCleanup()
         {
-            _bridge.SyncToClients();
+            _network.SyncDictionariesToClients();
 
             if (PhotonNetwork.IsConnected && PhotonNetwork.InRoom)
             {
@@ -171,9 +162,6 @@ namespace QuickReload
             }
         }
 
-        /// <summary>
-        /// 从当前关卡所在的池子中随机选取一个同类型关卡（避免选中自身）。
-        /// </summary>
         private Level GetRandomLevelOfSameType(RunManager rm, Level current)
         {
             if (current == null || rm == null)

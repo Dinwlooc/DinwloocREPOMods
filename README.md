@@ -21,7 +21,7 @@
 - **UI 辅助** (`MenuHelper`)  
   封装 MenuLib 按钮创建，自动读取配置中的位置和开关。
 
-- **配置基类** (`ModConfig<T>`)  
+- **配置基类** (`ConfigBase<T>` / `MenuConfigBase<T>`)  
   简化模组配置管理，自动绑定开关和位置。
 
 该库对游戏本身“零侵入”，仅提供 API 封装，并自动处理主机权限检查。
@@ -29,9 +29,14 @@
 ---
 
 ### 通用安装步骤
-1. 从本仓库 Releases 下载所需模组的压缩包（或克隆仓库自行编译）。
-2. 解压后，将对应的 `.dll` 文件或文件夹放入 `BepInEx/plugins` 目录。
-3. 启动游戏，模组自动加载。部分模组（如 UpgradeUninstaller）需确保其前置依赖已就位。
+
+1. 从本仓库 Releases 下载所需模组的压缩包（或克隆仓库自行编译）。  
+2. 确保已安装以下 **必须的前置依赖**：
+   - [BepInEx 5.x](https://github.com/BepInEx/BepInEx/releases)（模组加载框架）
+   - [MenuLib](https://thunderstore.io/c/repo/p/nickklmao/MenuLib/)（≥ 1.1.0，用于菜单按钮）
+   - [REPO_Dinwlooc_Lib](./REPO_Dinwlooc_Lib)（即本公共库，包含在所有模组压缩包中）
+3. 将对应的 `.dll` 文件或文件夹放入 `BepInEx/plugins` 目录。  
+4. 启动游戏，模组自动加载。部分模组（如 UpgradeUninstaller）还需 **REPOLib**（可选，但建议安装）。
 
 > 配置文件（`.cfg`）会在首次运行后自动生成于 `BepInEx/config/` 下，可用文本编辑器或 REPOConfig 修改。
 

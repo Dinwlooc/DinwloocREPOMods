@@ -1,5 +1,6 @@
 ﻿using System;
 using BepInEx.Configuration;
+using Dinwlooc.Common.Helpers;
 using UnityEngine;
 
 namespace MonsterHighlight
@@ -9,23 +10,23 @@ namespace MonsterHighlight
         Cyan, Blue, Red, Green, Yellow, Orange, Pink, Purple, White
     }
 
-    public class MonsterHighlightConfig
+    public class MonsterHighlightConfig : ConfigBase<MonsterHighlightConfig>
     {
-        public ConfigEntry<bool> EnableMod { get; }
-        public ConfigEntry<EHighlightPreset> HighlightPreset { get; }
-        public ConfigEntry<bool> EnableEmission { get; }
-        public ConfigEntry<bool> EnableIndicator { get; }
-        public ConfigEntry<int> CheckIntervalMs { get; }
-        public ConfigEntry<int> IndicatorUpdateStep { get; }
-        public ConfigEntry<float> IndicatorSize { get; }
-        public ConfigEntry<int> MinDistance { get; }
-        public ConfigEntry<int> MaxDistance { get; }
-        public ConfigEntry<float> MinSizeRatio { get; }
-        public ConfigEntry<float> IndicatorAlpha { get; }
+        public ConfigEntry<EHighlightPreset> HighlightPreset { get; private set; } = null!;
+        public ConfigEntry<bool> EnableEmission { get; private set; } = null!;
+        public ConfigEntry<bool> EnableIndicator { get; private set; } = null!;
+        public ConfigEntry<int> CheckIntervalMs { get; private set; } = null!;
+        public ConfigEntry<int> IndicatorUpdateStep { get; private set; } = null!;
+        public ConfigEntry<float> IndicatorSize { get; private set; } = null!;
+        public ConfigEntry<int> MinDistance { get; private set; } = null!;
+        public ConfigEntry<int> MaxDistance { get; private set; } = null!;
+        public ConfigEntry<float> MinSizeRatio { get; private set; } = null!;
+        public ConfigEntry<float> IndicatorAlpha { get; private set; } = null!;
 
-        public MonsterHighlightConfig(ConfigFile config)
+        public override void Bind(ConfigFile config)
         {
-            EnableMod = config.Bind("General", "EnableMod", true, "总开关");
+            base.Bind(config); // 绑定 Enabled
+
             HighlightPreset = config.Bind("Visual", "HighlightPreset", EHighlightPreset.Cyan, "高亮颜色");
             EnableEmission = config.Bind("Visual", "EnableEmission", true, "启用自发光高亮");
             EnableIndicator = config.Bind("Visual", "EnableIndicator", true, "启用屏幕指示器");
@@ -45,26 +46,20 @@ namespace MonsterHighlight
                 new ConfigDescription("指示器透明度", new AcceptableValueRange<float>(0f, 1f)));
         }
 
-        public static Color GetHighlightColor(EHighlightPreset preset)
+        public static Color GetHighlightColor(EHighlightPreset preset) => preset switch
         {
-            return preset switch
-            {
-                EHighlightPreset.Cyan => Color.cyan,
-                EHighlightPreset.Blue => Color.blue,
-                EHighlightPreset.Red => Color.red,
-                EHighlightPreset.Green => Color.green,
-                EHighlightPreset.Yellow => Color.yellow,
-                EHighlightPreset.Orange => new Color(1f, 0.5f, 0f),
-                EHighlightPreset.Pink => new Color(1f, 0.41f, 0.71f),
-                EHighlightPreset.Purple => new Color(0.5f, 0f, 0.5f),
-                EHighlightPreset.White => Color.white,
-                _ => Color.cyan,
-            };
-        }
+            EHighlightPreset.Cyan => Color.cyan,
+            EHighlightPreset.Blue => Color.blue,
+            EHighlightPreset.Red => Color.red,
+            EHighlightPreset.Green => Color.green,
+            EHighlightPreset.Yellow => Color.yellow,
+            EHighlightPreset.Orange => new Color(1f, 0.5f, 0f),
+            EHighlightPreset.Pink => new Color(1f, 0.41f, 0.71f),
+            EHighlightPreset.Purple => new Color(0.5f, 0f, 0.5f),
+            EHighlightPreset.White => Color.white,
+            _ => Color.cyan,
+        };
 
-        /// <summary>
-        /// 将配置的毫秒转换为帧数（基于 60fps 基准，向上取整）
-        /// </summary>
         public int GetCheckStepFrames()
         {
             int ms = CheckIntervalMs.Value;
@@ -72,14 +67,6 @@ namespace MonsterHighlight
             return Mathf.Clamp(frames, 1, 300);
         }
 
-        /// <summary>
-        /// 指示器更新间隔（秒）
-        /// </summary>
-        public float GetIndicatorUpdateInterval()
-        {
-            // 基于帧步长估算时间间隔，但为了精确，我们用固定帧率近似
-            // 实际上指示器更新频率由帧步长决定，此处返回近似值供参考
-            return IndicatorUpdateStep.Value / 60f;
-        }
+        public float GetIndicatorUpdateInterval() => IndicatorUpdateStep.Value / 60f;
     }
 }

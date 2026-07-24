@@ -33,24 +33,22 @@
     <PackageReference Include="R.E.P.O.GameLibs.Steam" Version="*-*" PrivateAssets="all" />
   </ItemGroup>
 
+  <!-- 只引用 Dinwlooc.Common 库，它已包含 MenuLib 依赖 -->
   <ItemGroup>
-    <Compile Include="src\**\*.cs" />
+    <Reference Include="REPO_Dinwlooc_Lib">
+      <HintPath>$(ProjectDir)Libs\REPO_Dinwlooc_Lib.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>
-    <!-- MenuLib 是必需的（因为使用了 MenuAPI） -->
-    <Reference Include="MenuLib">
-      <HintPath>Libs\MenuLib.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <!-- REPOConfig 不再引用，完全可选 -->
+    <Compile Include="src\**\*.cs" />
   </ItemGroup>
 
   <ItemGroup>
     <Folder Include="src\Core\" />
   </ItemGroup>
 
-  <!-- 覆盖可能的自动部署任务 -->
   <Target Name="OverrideDeploy" BeforeTargets="CopyToPluginOutputItems">
     <PropertyGroup>
       <PluginFolder></PluginFolder>
@@ -58,7 +56,6 @@
     </PropertyGroup>
   </Target>
 
-  <!-- 发布打包 -->
   <Target Name="PreparePublish" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
     <PropertyGroup>
       <PublishRoot>$(ProjectDir)Publish\</PublishRoot>

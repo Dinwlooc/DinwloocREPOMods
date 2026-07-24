@@ -34,7 +34,7 @@ namespace MonsterHighlight
 
         public void Start()
         {
-            if (!_config.EnableMod.Value) return;
+            if (!_config.Enabled.Value) return;
 
             int stepFrames = _config.GetCheckStepFrames();
             VisionEventGenerator.Instance.RegisterStep(stepFrames);
@@ -95,8 +95,7 @@ namespace MonsterHighlight
 
         private void OnVisibilityChanged(MonsterVisibilityChangedEvent evt)
         {
-            MonsterHighlight.Logger.LogInfo($"[HighlightController] OnVisibilityChanged: ID={evt.EnemyInstanceId}, Visible={evt.IsVisible}");
-
+            // 高频日志已移除，避免刷屏
             if (evt.IsVisible)
                 _visibleMonsters.Add(evt.EnemyInstanceId);
             else
@@ -118,7 +117,6 @@ namespace MonsterHighlight
                 int id = _enemyBridge.GetEnemyInstanceId(ep);
                 bool shouldHighlight = _visibleMonsters.Contains(id);
                 _enemyBridge.ApplyHighlight(ep, shouldHighlight, color);
-                // 发布自定义事件，通知其他模组高亮已应用
                 EventBus.Publish(new MonsterHighlightAppliedEvent(id, shouldHighlight));
             }
         }
@@ -128,7 +126,7 @@ namespace MonsterHighlight
             yield return null;
             while (true)
             {
-                if (!_config.EnableMod.Value || !SemiFunc.RunIsLevel())
+                if (!_config.Enabled.Value || !SemiFunc.RunIsLevel())
                 {
                     _indicatorRenderer.ClearAllIndicators();
                     yield return null;
@@ -143,7 +141,6 @@ namespace MonsterHighlight
                     {
                         if (!_enemyBridge.IsEnemyValid(ep)) continue;
                         int id = _enemyBridge.GetEnemyInstanceId(ep);
-                        // 指示器只渲染不可见的敌人
                         if (_visibleMonsters.Contains(id)) continue;
                         Vector3 pos = _enemyBridge.GetEnemyPosition(ep);
                         float offset = _enemyBridge.GetIndicatorHeightOffset(ep);

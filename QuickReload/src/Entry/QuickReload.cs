@@ -1,29 +1,19 @@
 ﻿using BepInEx;
-using BepInEx.Configuration;
 using BepInEx.Logging;
+using Dinwlooc.Common.Bridge;
+using Dinwlooc.Common.src.Bridge.IBridge;
 using UnityEngine;
 
 namespace QuickReload
 {
     [BepInPlugin("Dinwlooc.QuickReload", "QuickReload", "1.0.0")]
-    [BepInDependency("nickklmao.menulib")]
+    [BepInDependency("Dinwlooc.Common", BepInDependency.DependencyFlags.HardDependency)]
+    [BepInDependency("nickklmao.menulib")] // 用于 MenuHelper
     public class QuickReload : BaseUnityPlugin
     {
         internal static QuickReload Instance { get; private set; } = null!;
         public new static ManualLogSource Logger { get; private set; } = null!;
 
-        public static ConfigEntry<bool>? ReloadRandomScene { get; private set; }
-
-        public static ConfigEntry<bool>? ReloadButtonEnabled { get; private set; }
-        public static ConfigEntry<bool>? ShopButtonEnabled { get; private set; }
-
-        // 改为 int 类型，步长自动为 1
-        public static ConfigEntry<int>? ReloadButtonPosX { get; private set; }
-        public static ConfigEntry<int>? ReloadButtonPosY { get; private set; }
-        public static ConfigEntry<int>? ShopButtonPosX { get; private set; }
-        public static ConfigEntry<int>? ShopButtonPosY { get; private set; }
-
-        private RepoGameBridge _gameBridge = null!;
         private QuickReloadService _service = null!;
         private QuickReloadMenuController _menuController = null!;
 
@@ -35,53 +25,15 @@ namespace QuickReload
             gameObject.transform.parent = null;
             gameObject.hideFlags = HideFlags.HideAndDontSave;
 
-            ReloadRandomScene = Config.Bind(
-                "General",
-                "ReloadRandomScene",
-                false,
-                new ConfigDescription("启用时，在关卡/商店中“快速重载”会随机切换到同类型场景。")
-            );
+            // 初始化配置
+            QuickReloadConfig.Instance.Initialize(Config);
 
-            ReloadButtonEnabled = Config.Bind(
-                "UI",
-                "ReloadButtonEnabled",
-                true,
-                new ConfigDescription("是否显示“快速重载”按钮。")
-            );
-            ShopButtonEnabled = Config.Bind(
-                "UI",
-                "ShopButtonEnabled",
-                true,
-                new ConfigDescription("是否显示“返回商店”按钮。")
-            );
+            // 通过 BridgeLocator 获取所需桥接接口
+            var gameState = BridgeLocator.GameState;
+            var saveLoad = BridgeLocator.SaveLoad;
+            var network = BridgeLocator.Network;
 
-            ReloadButtonPosX = Config.Bind(
-                "UI",
-                "ReloadButtonPosX",
-                176,
-                new ConfigDescription("“快速重载”按钮的 X 偏移（整数）。")
-            );
-            ReloadButtonPosY = Config.Bind(
-                "UI",
-                "ReloadButtonPosY",
-                125,
-                new ConfigDescription("“快速重载”按钮的 Y 偏移（整数）。")
-            );
-            ShopButtonPosX = Config.Bind(
-                "UI",
-                "ShopButtonPosX",
-                176,
-                new ConfigDescription("“返回商店”按钮的 X 偏移（整数）。")
-            );
-            ShopButtonPosY = Config.Bind(
-                "UI",
-                "ShopButtonPosY",
-                85,
-                new ConfigDescription("“返回商店”按钮的 Y 偏移（整数）。")
-            );
-
-            _gameBridge = RepoGameBridge.Instance;
-            _service = new QuickReloadService(_gameBridge);
+            _service = new QuickReloadService(gameState, saveLoad, network);
             _menuController = new QuickReloadMenuController(_service, Logger);
 
             Logger.LogInfo($"{Info.Metadata.GUID} v{Info.Metadata.Version} has loaded!");

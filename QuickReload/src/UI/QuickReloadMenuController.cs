@@ -1,6 +1,5 @@
 using BepInEx.Logging;
-using MenuLib;
-using UnityEngine;
+using Dinwlooc.Common.Helpers;
 
 namespace QuickReload
 {
@@ -14,37 +13,25 @@ namespace QuickReload
             _service = service;
             _logger = logger;
 
-            if (QuickReload.ReloadButtonEnabled?.Value ?? true)
-            {
-                float posX = QuickReload.ReloadButtonPosX?.Value ?? 216;
-                float posY = QuickReload.ReloadButtonPosY?.Value ?? 125;
-                MenuAPI.AddElementToEscapeMenu((parent) =>
-                {
-                    var button = MenuAPI.CreateREPOButton(
-                        "快速重载",
-                        OnQuickReloadClicked,
-                        parent,
-                        new Vector2(posX, posY)
-                    );
-                    button.gameObject.SetActive(true);
-                });
-            }
+            var config = QuickReloadConfig.Instance;
 
-            if (QuickReload.ShopButtonEnabled?.Value ?? true)
-            {
-                float posX = QuickReload.ShopButtonPosX?.Value ?? 216;
-                float posY = QuickReload.ShopButtonPosY?.Value ?? 85;
-                MenuAPI.AddElementToEscapeMenu((parent) =>
-                {
-                    var button = MenuAPI.CreateREPOButton(
-                        "返回商店",
-                        OnGoToShopClicked,
-                        parent,
-                        new Vector2(posX, posY)
-                    );
-                    button.gameObject.SetActive(true);
-                });
-            }
+            // 添加“快速重载”按钮
+            MenuHelper.AddEscapeMenuButton(
+                text: "快速重载",
+                onClick: OnQuickReloadClicked,
+                enabledConfig: config.ReloadButtonEnabled,
+                posXConfig: config.ReloadButtonPosX,
+                posYConfig: config.ReloadButtonPosY
+            );
+
+            // 添加“返回商店”按钮
+            MenuHelper.AddEscapeMenuButton(
+                text: "返回商店",
+                onClick: OnGoToShopClicked,
+                enabledConfig: config.ShopButtonEnabled,
+                posXConfig: config.ShopButtonPosX,
+                posYConfig: config.ShopButtonPosY
+            );
         }
 
         private void OnQuickReloadClicked()
