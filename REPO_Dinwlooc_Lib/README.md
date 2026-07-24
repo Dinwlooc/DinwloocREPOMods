@@ -1,64 +1,174 @@
-# QuickReload
+# REPO_Dinwlooc_Lib
 
-**不保存进度，直接重新加载关卡、卡车或返回商店。**  
-仅限房主或单人模式在非主菜单场景使用，点击 ESC 菜单中的“快速重载”或“返回商店”按钮即可。
+Dinwlooc 模组公共依赖库，为 Dinwlooc 系列模组提供统一的游戏桥接、事件总线、UI 辅助和配置基类，简化开发并增强模组间的互操作性。
 
 ---
 
-## 前置依赖
+## 前置依赖（必须安装）
 
-- **[BepInEx](https://github.com/BepInEx/BepInEx/releases)** – 模组加载框架（≥ 5.4.2100）
-- **[MenuLib](https://thunderstore.io/c/repo/p/nickklmao/MenuLib/)** – 菜单界面扩展（≥ 1.1.0）  
-  *注：公共依赖库已包含对 MenuLib 的依赖。*
-- **[REPO_Dinwlooc_Lib](../REPO_Dinwlooc_Lib)** – 公共依赖库（随本模组一起分发）
+- **BepInEx 5.x** – 插件加载框架。
+- **MenuLib** – 提供菜单界面扩展（版本 ≥ 1.1.0）。  
+  下载地址：[https://thunderstore.io/c/repo/p/nickklmao/MenuLib/](https://thunderstore.io/c/repo/p/nickklmao/MenuLib/)
+- **REPOLib**（可选，但建议安装） – 提供自定义物品与升级系统支持（版本 ≥ 4.2.0）。  
+  下载地址：[https://thunderstore.io/c/repo/p/Zehs/REPOLib/](https://thunderstore.io/c/repo/p/Zehs/REPOLib/)  
+  若未安装，升级相关桥接将回退至原生支持。
+
+请将所有依赖库放在 `BepInEx/plugins` 目录下。
 
 ---
 
 ## 安装方法
 
-1. 下载 `QuickReload.zip` 并解压。  
-2. 将 `QuickReload.dll` 放入 `BepInEx/plugins` 目录。  
-3. 确保 `REPO_Dinwlooc_Lib` 已安装在 `plugins` 目录。
+1. 下载 `REPO_Dinwlooc_Lib.zip` 并解压。  
+2. 将 `REPO_Dinwlooc_Lib` 文件夹整体放入 `BepInEx/plugins` 目录。  
+3. 启动游戏，确保前置依赖已加载。本库在 REPOLib v4.2.0 和 MenuLib v1.1.0 环境下测试通过。
 
 ---
 
-## 使用方法
+## 功能概览
 
-- 在游戏中按 **ESC** 打开菜单（**不能**在主菜单界面）。  
-- 在菜单中找到 **“快速重载”** 或 **“返回商店”** 按钮（仅当你是房主或在单人模式时可用）。  
-- 点击后，**切换至目标场景**。  
-- 多人模式下，房主点击后所有玩家将同步重载场景。
+本库本身不提供任何直接面向用户的游戏功能，而是为其他模组提供以下基础设施：
 
-> **注意 1**：如果启用了随机化，客户端在加载过场动画内不会看到新场景的入场动画，而是播放最初场景的入场动画。
+### 1. 原子化游戏桥接（命名空间 `Dinwlooc.Common.Bridge`）
+将游戏原生 API 拆分为多个职责单一的接口，模组可按需引用：
 
-> **注意 2**：如果你在关卡中，此操作会**立即读取最近的存档**，恢复生命值与物品电量。它会保留在关卡内提取到的装饰品代币，但会把升级盒的使用记录重置到关卡开头。
+- `IPlayerBridge`      – 玩家获取、血量读写、治愈  
+- `IItemBridge`        – 手持物品电池操作  
+- `IHealthPackBridge`  – 医疗包查找与消耗  
+- `ITruckBridge`       – 卡车电量查询与消耗  
+- `ISaveLoadBridge`    – 存档读写、场景重载、跳转商店  
+- `IGameStateBridge`   – 游戏模式、场景类型、权限查询  
+- `INetworkBridge`     – 字典数据同步  
+- `IUpgradeBridge`     – 升级系统（支持原生升级，并在 REPOLib 存在时自动增强）  
+- `IEnemyBridge`       – 怪物操作（获取列表、位置、高亮等）
 
-> **注意 3**：若不在关卡中（如在商店或卡车），则**立即存档**。这不会影响在商店内丢失的生命值，但会保留购买和升级盒的使用记录。
+通过 `BridgeLocator` 静态类获取所需桥接实例，无需关心底层实现：
+```csharp
+var player = BridgeLocator.Player;
+var state = BridgeLocator.GameState;
+var upgrade = BridgeLocator.Upgrade; // 自动检测并选择最佳实现
+```
+- 若 REPOLib 已加载，升级桥接会优先使用 `REPOLibItemUpgrade.UpgradeId` 映射自定义升级。  
+- 若 REPOLib 未加载，升级桥接回退到原生组件类型映射（仅支持原版升级）。  
+所有其他桥接接口均为纯原生实现，不依赖 REPOLib。
+
+### 2. 事件总线（命名空间 `Dinwlooc.Common.Core.EventBus`）
+轻量级发布-订阅机制，支持模组间松耦合通信。
+```csharp
+// 发布事件
+EventBus.Publish(new PlayerRevivedEvent(playerAvatar));
+// 订阅事件
+EventBus.Subscribe<PlayerRevivedEvent>(e => { /* 处理逻辑 */ });
+```
+预定义事件：
+- `PlayerDiedEvent` – 玩家死亡时触发  
+- `PlayerRevivedEvent` – 玩家复活时触发  
+- `MonsterVisibilityChangedEvent` – 怪物可见性变化时触发  
+- `UpgradeUninstalledEvent` – 升级卸载完成时触发（由 UpgradeUninstaller 发布）
+
+### 3. 公共服务宿主（`CommonService`）
+提供统一的 MonoBehaviour 生命周期回调注册，避免各模组自行挂载组件。
+```csharp
+CommonService.Instance.RegisterUpdate(dt => { /* 每帧执行 */ });
+CommonService.Instance.RegisterFixedUpdate(dt => { /* 固定时间步执行 */ });
+CommonService.Instance.RunCoroutine(MyCoroutine());
+```
+
+### 4. UI 辅助（`MenuHelper`）
+封装 MenuLib 的按钮创建，自动读取配置中的位置和开关。
+```csharp
+MenuHelper.AddEscapeMenuButton(
+    text: "我的按钮",
+    onClick: () => { /* 逻辑 */ },
+    enabledConfig: MyConfig.Enabled,
+    posXConfig: MyConfig.PosX,
+    posYConfig: MyConfig.PosY
+);
+```
+
+### 5. 配置基类（`ConfigBase<T>` / `MenuConfigBase<T>`）
+简化模组配置管理，自动绑定开关和位置。
+- `ConfigBase<T>` – 仅提供总开关 `Enabled`。  
+- `MenuConfigBase<T>` – 继承自前者，额外提供 `PosX` 和 `PosY` 用于菜单按钮。
+
+示例：
+```csharp
+public class MyConfig : MenuConfigBase<MyConfig>
+{
+    public ConfigEntry<int> HealAmount { get; private set; }
+    public override void Bind(ConfigFile config)
+    {
+        base.Bind(config);
+        HealAmount = config.Bind("Healing", "Amount", 5, "恢复量");
+    }
+}
+// 在模组 Awake 中初始化
+MyConfig.Instance.Initialize(Config);
+```
 
 ---
 
-## 配置项
+## 面向模组开发者的使用指南
 
-配置文件 `BepInEx/config/Dinwlooc.QuickReload.cfg` 会在首次运行后生成，可用文本编辑器或 REPOConfig 调整。
+### 添加依赖
+在你的模组项目文件中引用 `REPO_Dinwlooc_Lib.dll`，并在插件类上声明：
+```csharp
+[BepInDependency("Dinwlooc.Common")]
+```
 
-- **Enabled**（布尔，默认 `true`）：是否启用该模组（总开关）。  
-- **ReloadRandomScene**（布尔，默认 `false`）：启用时，在关卡/商店中重载会随机切换到同类型场景，可以用来刷关卡。  
-- **ReloadButtonEnabled**（布尔，默认 `true`）：是否显示“快速重载”按钮。  
-- **ReloadButtonPosX**（整数，默认 `176`）：按钮的 X 偏移。  
-- **ReloadButtonPosY**（整数，默认 `125`）：按钮的 Y 偏移。  
-- **ShopButtonEnabled**（布尔，默认 `true`）：是否显示“返回商店”按钮。  
-- **ShopButtonPosX**（整数，默认 `176`）：按钮的 X 偏移。  
-- **ShopButtonPosY**（整数，默认 `85`）：按钮的 Y 偏移。
+### 按需获取桥接
+```csharp
+using Dinwlooc.Common.Bridge;
+
+private IPlayerBridge _player = BridgeLocator.Player;
+private IGameStateBridge _state = BridgeLocator.GameState;
+private IUpgradeBridge _upgrade = BridgeLocator.Upgrade; // 自动选择实现
+```
+
+### 使用事件
+```csharp
+using Dinwlooc.Common.Core;
+using Dinwlooc.Common.Events;
+
+// 订阅
+EventBus.Subscribe<PlayerRevivedEvent>(OnPlayerRevived);
+// 取消订阅
+EventBus.Unsubscribe<PlayerRevivedEvent>(OnPlayerRevived);
+
+private void OnPlayerRevived(PlayerRevivedEvent ev) { /* 处理玩家复活 */ }
+```
+
+### 注册帧回调
+```csharp
+private void Awake() => CommonService.Instance.RegisterUpdate(OnUpdate);
+private void OnUpdate(float deltaTime) { /* 每帧执行 */ }
+private void OnDestroy() => CommonService.Instance.UnregisterUpdate(OnUpdate);
+```
+
+### 添加 ESC 菜单按钮
+```csharp
+using Dinwlooc.Common.Helpers;
+
+MenuHelper.AddEscapeMenuButton(
+    text: "快速重载",
+    onClick: () => { /* 重载逻辑 */ },
+    enabledConfig: QuickReloadConfig.Instance.Enabled,
+    posXConfig: QuickReloadConfig.Instance.PosX,
+    posYConfig: QuickReloadConfig.Instance.PosY
+);
+```
 
 ---
 
-## 关于存档备份文件
+## 兼容性与注意事项
 
-游戏会在每次保存时自动生成带时间戳和递增编号的备份文件。  
-本模组会主动存档，因此备份文件数量可能增多。请定期清理 `%USERPROFILE%/AppData/LocalLow/REPO/saves/` 下的 `*_BACKUP*.es3` 文件（保留主存档即可）。
+- 本库本身不修改游戏任何代码，仅提供 API 封装，对游戏“零侵入”。
+- `IUpgradeBridge` 在 REPOLib 存在时将增强，不存在时回退原生。
+- 所有桥接方法均会检查主机权限（`IsMasterClientOrSingleplayer`），非主机调用会静默失败（如写入操作）。
+- 本库依赖 MenuLib（硬依赖），若未安装则无法加载。REPOLib 为软依赖。
 
 ---
 
 ## 许可
 
-本项目采用 **MIT 许可证**，详见 [LICENSE](LICENSE) 文件。
+本项目采用 **MIT 许可证**，详见 LICENSE 文件。
