@@ -16,7 +16,7 @@ public class NativeGameBridge :
     IGameStateBridge,
     INetworkBridge,
     IUpgradeBridge,
-    IEnemyBridge      // 新增
+    IEnemyBridge
 {
     private static NativeGameBridge? _instance;
     public static NativeGameBridge Instance => _instance ??= new NativeGameBridge();
@@ -26,9 +26,20 @@ public class NativeGameBridge :
     // ========== 缓存字段 ==========
     protected Dictionary<string, Item>? _upgradeItemCache;
     protected readonly object _cacheLock = new();
-
-    // 缓存 Enemy 的 Rigidbody 反射字段（提升性能）
     private static FieldInfo? _rigidField;
+
+    // ---- 医疗包反射缓存 ----
+    private static MethodInfo? _usedRPCMethod;
+    private static FieldInfo? _usedField;
+    private static FieldInfo? _itemToggleField;
+
+    static NativeGameBridge()
+    {
+        var hpType = typeof(ItemHealthPack);
+        _usedRPCMethod = hpType.GetMethod("UsedRPC", BindingFlags.NonPublic | BindingFlags.Instance);
+        _usedField = hpType.GetField("used", BindingFlags.NonPublic | BindingFlags.Instance);
+        _itemToggleField = hpType.GetField("itemToggle", BindingFlags.NonPublic | BindingFlags.Instance);
+    }
 
     // ========== IGameStateBridge ==========
     public virtual bool IsMasterClientOrSingleplayer() => SemiFunc.IsMasterClientOrSingleplayer();
@@ -111,7 +122,7 @@ public class NativeGameBridge :
         {
             if (item == null || item.itemType != SemiFunc.itemType.healthPack) continue;
             var hp = item.GetComponent<ItemHealthPack>();
-            if (hp == null || hp.healAmount <= 0) continue;
+            if (hp == null || !IsHealthPackUsable(hp)) continue;
             float dist = Vector3.Distance(item.transform.position, position);
             if (dist < nearestDist)
             {
@@ -121,12 +132,66 @@ public class NativeGameBridge :
         }
         return nearest;
     }
+
+    public virtual bool IsHealthPackUsable(ItemHealthPack healthPack)
+    {
+        if (healthPack == null) return false;
+        if (healthPack.healAmount <= 0) return false;
+        if (_usedField != null)
+        {
+            try { if ((bool)_usedField.GetValue(healthPack)) return false; }
+            catch { /* 忽略 */ }
+        }
+        return true;
+    }
+
+    public virtual int UseHealthPack(ItemHealthPack healthPack, int maxAmount)
+    {
+        if (!IsMasterClientOrSingleplayer()) return 0;
+        if (!IsHealthPackUsable(healthPack)) return 0;
+
+        int consume = Mathf.Min(maxAmount, healthPack.healAmount);
+        if (consume <= 0) return 0;
+
+        healthPack.healAmount -= consume;
+
+        if (healthPack.healAmount <= 0)
+        {
+            healthPack.healAmount = 0;
+            if (_usedField != null)
+            {
+                try { _usedField.SetValue(healthPack, true); }
+                catch { /* 忽略 */ }
+            }
+
+            // 触发原版 UsedRPC
+            if (SemiFunc.IsMultiplayer() && healthPack.photonView != null)
+            {
+                healthPack.photonView.RPC("UsedRPC", RpcTarget.All);
+            }
+            else if (_usedRPCMethod != null)
+            {
+                try { _usedRPCMethod.Invoke(healthPack, new object[] { default(PhotonMessageInfo) }); }
+                catch { /* 降级处理 */ }
+            }
+
+            // 禁用 ItemToggle（保险）
+            if (_itemToggleField != null)
+            {
+                var itemToggle = _itemToggleField.GetValue(healthPack) as ItemToggle;
+                itemToggle?.ToggleDisable(true);
+            }
+        }
+
+        return consume;
+    }
+
+    // 注意：此方法已不再强制销毁对象，仅消耗所有剩余治疗量，原版 UsedRPC 会处理禁用交互等。
     public virtual void ConsumeHealthPack(ItemAttributes healthPack)
     {
-        if (healthPack == null || !IsMasterClientOrSingleplayer()) return;
-        UnityEngine.Object.Destroy(healthPack.gameObject);
-        if (ItemManager.instance != null)
-            ItemManager.instance.spawnedItems.Remove(healthPack);
+        var hp = healthPack?.GetComponent<ItemHealthPack>();
+        if (hp == null) return;
+        UseHealthPack(hp, hp.healAmount); // 消耗全部剩余量，若归零则触发原版逻辑
     }
 
     // ========== ITruckBridge ==========
@@ -249,14 +314,14 @@ public class NativeGameBridge :
         StatsManager.instance.itemsPurchased[itemName] = current + count;
     }
 
-    // ========== IEnemyBridge 实现 ==========
+    // ========== IEnemyBridge ==========
     public virtual IReadOnlyList<EnemyParent> GetAllEnemies()
     {
         var director = EnemyDirector.instance;
         if (director == null) return Array.Empty<EnemyParent>();
         var list = director.enemiesSpawned;
         if (list == null) return Array.Empty<EnemyParent>();
-        return list; // 直接返回，外部只读遍历
+        return list;
     }
 
     public virtual bool IsEnemyValid(EnemyParent enemy)
@@ -324,7 +389,6 @@ public class NativeGameBridge :
         if (enemy?.Enemy == null) return 0.5f;
         Enemy enemyComp = enemy.Enemy;
 
-        // 缓存反射字段
         if (_rigidField == null)
             _rigidField = typeof(Enemy).GetField("Rigidbody", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
@@ -359,7 +423,6 @@ public class NativeGameBridge :
         }
         catch { }
 
-        // 回退：使用模型缩放
         try
         {
             Transform model = enemyComp.CenterTransform;
@@ -381,7 +444,7 @@ public class NativeGameBridge :
         return 0.5f;
     }
 
-    // ========== 升级定义（基类使用） ==========
+    // ========== 升级定义 ==========
     protected static class UpgradeDefinitions
     {
         public static readonly Dictionary<string, string> KeyToComponentType = new()
