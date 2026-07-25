@@ -1,29 +1,44 @@
+// Dinwlooc.Common/Core/CommonPlugin.cs
 using BepInEx;
 using BepInEx.Logging;
 using Dinwlooc.Common.Bridge;
+using Dinwlooc.Common.src.Bridge.IBridge;
 using UnityEngine;
 
-namespace Dinwlooc.Common.Core;
-
-[BepInPlugin(PluginInfo.PLUGIN_GUID, PluginInfo.PLUGIN_NAME, PluginInfo.PLUGIN_VERSION)]
-[BepInDependency(REPOLib.MyPluginInfo.PLUGIN_GUID, BepInDependency.DependencyFlags.SoftDependency)]
-[BepInDependency("nickklmao.menulib")]
-public class CommonPlugin : BaseUnityPlugin
+namespace Dinwlooc.Common.Core
 {
-    internal new static ManualLogSource Logger { get; private set; } = null!;
-
-    private void Awake()
+    [BepInPlugin(PluginInfo.PLUGIN_GUID, PluginInfo.PLUGIN_NAME, PluginInfo.PLUGIN_VERSION)]
+    [BepInDependency(REPOLib.MyPluginInfo.PLUGIN_GUID, BepInDependency.DependencyFlags.SoftDependency)]
+    [BepInDependency("nickklmao.menulib")]
+    public class CommonPlugin : BaseUnityPlugin
     {
-        Logger = base.Logger;
+        internal new static ManualLogSource Logger { get; private set; } = null!;
 
-        // 1. 初始化桥接（通过 BridgeLocator 自动选择原生或 REPOLib 增强实现）
-        _ = BridgeLocator.Player; // 触发静态构造和检测
+        private void Awake()
+        {
+            Logger = base.Logger;
 
-        // 2. 挂载公共服务（MonoBehaviour 宿主）
-        var go = new GameObject(nameof(CommonService));
-        DontDestroyOnLoad(go);
-        go.AddComponent<CommonService>();
+            // 注册所有桥接器（单例）
+            BridgeLocator.Register<IGameStateBridge>(CoreBridge.Instance);
+            BridgeLocator.Register<ISaveLoadBridge>(CoreBridge.Instance);
+            BridgeLocator.Register<INetworkBridge>(CoreBridge.Instance);
 
-        Logger.LogInfo($"{PluginInfo.PLUGIN_NAME} v{PluginInfo.PLUGIN_VERSION} loaded.");
+            BridgeLocator.Register<IItemBridge>(ItemBridge.Instance);
+            BridgeLocator.Register<IHealthPackBridge>(ItemBridge.Instance);
+
+            BridgeLocator.Register<IPlayerBridge>(PlayerBridge.Instance);
+            BridgeLocator.Register<IEnergyBridge>(PlayerBridge.Instance);
+
+            BridgeLocator.Register<ITruckBridge>(TruckBridge.Instance);
+            BridgeLocator.Register<IUpgradeBridge>(UpgradeBridge.Instance);
+            BridgeLocator.Register<IEnemyBridge>(EnemyBridge.Instance);
+
+            // 挂载公共服务
+            var go = new GameObject(nameof(CommonService));
+            DontDestroyOnLoad(go);
+            go.AddComponent<CommonService>();
+
+            Logger.LogInfo($"{PluginInfo.PLUGIN_NAME} v{PluginInfo.PLUGIN_VERSION} loaded.");
+        }
     }
 }

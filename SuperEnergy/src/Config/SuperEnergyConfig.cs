@@ -7,13 +7,13 @@ namespace SuperEnergy
     {
         // ---- 物品充电 ----
         public ConfigEntry<bool> EnableItemCharging { get; private set; } = null!;
-        public ConfigEntry<ChargingSource> ChargingSourceSetting { get; private set; } = null!; // 重命名
+        public ConfigEntry<ChargingSource> ChargingSourceSetting { get; private set; } = null!;
         public ConfigEntry<int> ChargeInterval { get; private set; } = null!;
         public ConfigEntry<int> ChargeAmount { get; private set; } = null!;
 
         // ---- 玩家自愈 ----
         public ConfigEntry<bool> EnablePlayerHeal { get; private set; } = null!;
-        public ConfigEntry<HealSource> HealSourceSetting { get; private set; } = null!; // 重命名
+        public ConfigEntry<HealSource> HealSourceSetting { get; private set; } = null!;
         public ConfigEntry<int> HealInterval { get; private set; } = null!;
         public ConfigEntry<int> HealAmount { get; private set; } = null!;
 
@@ -23,7 +23,10 @@ namespace SuperEnergy
 
         // ---- 体力加速 ----
         public ConfigEntry<bool> EnableStaminaBoost { get; private set; } = null!;
-        public ConfigEntry<int> StaminaMultiplier { get; private set; } = null!;
+        public ConfigEntry<int> StaminaPercent { get; private set; } = null!;
+        public ConfigEntry<bool> EnableCompensationWhenDisabled { get; private set; } = null!;
+        public ConfigEntry<bool> EnableCrouchBoost { get; private set; } = null!;
+        public ConfigEntry<bool> UseHostConfig { get; private set; } = null!;
 
         public override void Bind(ConfigFile config)
         {
@@ -50,8 +53,14 @@ namespace SuperEnergy
                 new ConfigDescription("复活所需时间（秒），设为0则立刻复活", new AcceptableValueRange<int>(0, 300)));
 
             EnableStaminaBoost = config.Bind("StaminaBoost", "Enable", true, "启用体力加速恢复");
-            StaminaMultiplier = config.Bind("StaminaBoost", "Multiplier", 2,
-                new ConfigDescription("恢复倍率", new AcceptableValueRange<int>(1, 10)));
+            StaminaPercent = config.Bind("StaminaBoost", "Percent", 100,
+                new ConfigDescription("额外恢复百分比（0~500）", new AcceptableValueRange<int>(0, 500)));
+            EnableCompensationWhenDisabled = config.Bind("StaminaBoost", "CompensateWhenDisabled", false,
+                "原版禁用时是否强制恢复并应用加成");
+            EnableCrouchBoost = config.Bind("StaminaBoost", "EnableCrouchBoost", true,
+                "是否对下蹲恢复应用百分比加成");
+            UseHostConfig = config.Bind("StaminaBoost", "UseHostConfig", false,
+                "是否使用房主的体力配置（开启后忽略本地配置，等待房主广播）");
         }
     }
 

@@ -17,8 +17,6 @@ namespace Dinwlooc.Common.Core
             }
             if (!list.Contains(handler))
                 list.Add(handler);
-            // 可选日志（仅调试，可注释）
-            // CommonPlugin.Logger.LogInfo($"[EventBus] Subscribed to {type.Name}");
         }
 
         public static void Unsubscribe<T>(Action<T> handler) where T : struct
