@@ -98,7 +98,7 @@ namespace Dinwlooc.Common.Bridge
         {
             var ctrl = GetController(player);
             if (ctrl == null) return;
-            if (!CoreBridge.Instance.IsMasterClientOrSingleplayer()) return;
+            // 体力是本地玩家属性，任何人可以直接修改自己的体力，无需主机权限
             float max = ctrl.EnergyStart;
             ctrl.EnergyCurrent = Mathf.Clamp(value, 0f, max);
         }

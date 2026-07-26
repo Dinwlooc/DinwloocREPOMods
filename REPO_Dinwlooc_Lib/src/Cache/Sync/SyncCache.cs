@@ -6,13 +6,9 @@ using Photon.Pun;
 
 namespace Dinwlooc.Common.Sync
 {
-    /// <summary>
-    /// 同步缓存实现。内部自动处理网络广播，业务层只需关注数据的读写。
-    /// </summary>
     internal class SyncCache<TKey, TValue> : ISyncCache<TKey, TValue> where TKey : notnull
     {
-        // 常量
-        private const int DEFAULT_EXPIRATION_SECONDS = 0; // 0 表示永不过期
+        private const int DEFAULT_EXPIRATION_SECONDS = 0;
 
         private readonly ConcurrentDictionary<TKey, TValue> _cache = new ConcurrentDictionary<TKey, TValue>();
         private readonly SyncMode _mode;
@@ -52,6 +48,14 @@ namespace Dinwlooc.Common.Sync
 
         public void Set(TKey key, TValue value, TimeSpan? expiration = null)
         {
+            if (_cache.TryGetValue(key, out TValue existingValue))
+            {
+                if (EqualityComparer<TValue>.Default.Equals(existingValue, value))
+                {
+                    return;
+                }
+            }
+
             bool isHost = PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom;
             bool canWrite = isHost || (_mode == SyncMode.ClientSnapshot) || (_mode == SyncMode.Merge);
             if (!canWrite)
@@ -67,12 +71,12 @@ namespace Dinwlooc.Common.Sync
                 if (UseBinarySerialization)
                 {
                     byte[] data = _serializationStrategy.SerializeToBinary(value);
-                    SyncRpcHelper.BroadcastDataBinary<TKey>(_cacheName, key, data);
+                    SyncRpcModule.BroadcastDataBinary<TKey>(_cacheName, key, data);
                 }
                 else
                 {
                     object data = _serializationStrategy.SerializeToObject(value);
-                    SyncRpcHelper.BroadcastData<TKey, object>(_cacheName, key, data);
+                    SyncRpcModule.BroadcastData<TKey, object>(_cacheName, key, data);
                 }
             }
             else if ((_mode == SyncMode.ClientSnapshot) && !isHost)
@@ -80,12 +84,12 @@ namespace Dinwlooc.Common.Sync
                 if (UseBinarySerialization)
                 {
                     byte[] data = _serializationStrategy.SerializeToBinary(value);
-                    SyncRpcHelper.SendSnapshotBinary<TKey>(_cacheName, key, data);
+                    SyncRpcModule.SendSnapshotBinary<TKey>(_cacheName, key, data);
                 }
                 else
                 {
                     object data = _serializationStrategy.SerializeToObject(value);
-                    SyncRpcHelper.SendSnapshot<TKey, object>(_cacheName, key, data);
+                    SyncRpcModule.SendSnapshot<TKey, object>(_cacheName, key, data);
                 }
             }
             else if ((_mode == SyncMode.Merge) && !isHost)
@@ -93,12 +97,12 @@ namespace Dinwlooc.Common.Sync
                 if (UseBinarySerialization)
                 {
                     byte[] data = _serializationStrategy.SerializeToBinary(value);
-                    SyncRpcHelper.SendMergeRequestBinary<TKey>(_cacheName, key, data);
+                    SyncRpcModule.SendMergeRequestBinary<TKey>(_cacheName, key, data);
                 }
                 else
                 {
                     object data = _serializationStrategy.SerializeToObject(value);
-                    SyncRpcHelper.SendMergeRequest<TKey, object>(_cacheName, key, data);
+                    SyncRpcModule.SendMergeRequest<TKey, object>(_cacheName, key, data);
                 }
             }
         }
@@ -108,7 +112,7 @@ namespace Dinwlooc.Common.Sync
             bool removed = _cache.TryRemove(key, out _);
             if (removed && PhotonNetwork.IsMasterClient && ((_mode == SyncMode.HostAuthority) || (_mode == SyncMode.Merge)))
             {
-                SyncRpcHelper.BroadcastRemove<TKey>(_cacheName, key);
+                SyncRpcModule.BroadcastRemove<TKey>(_cacheName, key);
             }
             return removed;
         }
@@ -118,14 +122,11 @@ namespace Dinwlooc.Common.Sync
             _cache.Clear();
             if (PhotonNetwork.IsMasterClient && ((_mode == SyncMode.HostAuthority) || (_mode == SyncMode.Merge)))
             {
-                SyncRpcHelper.BroadcastClear(_cacheName);
+                SyncRpcModule.BroadcastClear(_cacheName);
             }
         }
 
-        public void Refresh(TKey key)
-        {
-            // 业务场景暂未使用
-        }
+        public void Refresh(TKey key) { }
 
         public void SyncNow()
         {
@@ -143,7 +144,7 @@ namespace Dinwlooc.Common.Sync
                     byte[] serialized = _serializationStrategy.SerializeToBinary(kv.Value);
                     data[kv.Key!] = serialized;
                 }
-                SyncRpcHelper.BroadcastFullSnapshotBinary<TKey>(_cacheName, data);
+                SyncRpcModule.BroadcastFullSnapshotBinary<TKey>(_cacheName, data);
             }
             else
             {
@@ -152,7 +153,7 @@ namespace Dinwlooc.Common.Sync
                 {
                     data[kv.Key] = _serializationStrategy.SerializeToObject(kv.Value);
                 }
-                SyncRpcHelper.BroadcastFullSnapshot<TKey, object>(_cacheName, data);
+                SyncRpcModule.BroadcastFullSnapshot<TKey, object>(_cacheName, data);
             }
         }
 

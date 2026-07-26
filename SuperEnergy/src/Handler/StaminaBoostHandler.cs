@@ -1,6 +1,6 @@
-﻿// StaminaBoostHandler.cs
-using Dinwlooc.Common.Bridge;
+﻿using Dinwlooc.Common.Bridge;
 using Dinwlooc.Common.IBridge;
+using Dinwlooc.Common.Caching;
 using UnityEngine;
 
 namespace SuperEnergy
@@ -18,13 +18,18 @@ namespace SuperEnergy
 
         public void Process(bool isHost, float deltaTime)
         {
-            var config = SuperEnergyConfig.Instance;
-            if (!config.EnableStaminaBoost.Value) return;
+            SuperEnergyConfig config = SuperEnergyConfig.Instance;
+            if (!config.EnableStaminaBoost.Value)
+                return;
 
-            var player = _playerBridge.GetLocalPlayer();
-            if (player == null || !player.isLocal) return;
+            PlayerAvatar player = _playerBridge.GetLocalPlayer();
+            if (player == null || !player.isLocal)
+                return;
 
-            if (!SuperEnergy.TryGetEffectiveConfig(out var remoteConfig))
+            if (!StaminaConfigManager.TryGetEffectiveConfig(out RemoteStaminaConfig? remoteConfig))
+                return;
+
+            if (remoteConfig == null)  // 显式空检查
                 return;
 
             int percent = remoteConfig.Percent;
@@ -38,30 +43,20 @@ namespace SuperEnergy
             float amplifiedStanding = 0f;
 
             if (canRegen)
-            {
                 amplifiedStanding = standingRate * multiplier;
-            }
             else if (comp)
-            {
                 amplifiedStanding = standingRate * multiplier;
-            }
 
             float crouchRate = _energyBridge.GetCrouchRegenRate(player);
             float amplifiedCrouch = 0f;
             if (crouchRate > 0f && crouch)
-            {
                 amplifiedCrouch = crouchRate * multiplier;
-            }
             else if (crouchRate > 0f && !crouch)
-            {
                 amplifiedCrouch = crouchRate;
-            }
 
             float totalRate = amplifiedStanding + amplifiedCrouch;
             if (totalRate > 0f)
-            {
                 _energyBridge.AddEnergy(player, totalRate * deltaTime);
-            }
         }
     }
 }
