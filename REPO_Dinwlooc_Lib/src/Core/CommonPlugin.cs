@@ -2,7 +2,7 @@
 using BepInEx;
 using BepInEx.Logging;
 using Dinwlooc.Common.Bridge;
-using Dinwlooc.Common.src.Bridge.IBridge;
+using Dinwlooc.Common.IBridge;
 using UnityEngine;
 
 namespace Dinwlooc.Common.Core

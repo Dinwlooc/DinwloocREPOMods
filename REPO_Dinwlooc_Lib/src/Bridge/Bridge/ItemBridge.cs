@@ -1,7 +1,7 @@
 ﻿// Dinwlooc.Common/Bridge/ItemBridge.cs
 using System;
 using System.Reflection;
-using Dinwlooc.Common.src.Bridge.IBridge;
+using Dinwlooc.Common.IBridge;
 using UnityEngine;
 
 namespace Dinwlooc.Common.Bridge

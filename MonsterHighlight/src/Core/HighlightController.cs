@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using Dinwlooc.Common.Core;
 using Dinwlooc.Common.Events;
-using Dinwlooc.Common.src.Bridge.IBridge;
+using Dinwlooc.Common.IBridge;
 using MonsterHighlight.Events;
 using UnityEngine;
 

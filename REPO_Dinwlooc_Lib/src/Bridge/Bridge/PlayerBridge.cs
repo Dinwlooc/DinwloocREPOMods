@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Reflection;
-using Dinwlooc.Common.src.Bridge.IBridge;
+using Dinwlooc.Common.IBridge;
 using UnityEngine;
 
 namespace Dinwlooc.Common.Bridge

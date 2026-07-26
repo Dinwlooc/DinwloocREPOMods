@@ -1,6 +1,6 @@
 ﻿using System.Collections.Generic;
 
-namespace Dinwlooc.Common.src.Bridge.IBridge;
+namespace Dinwlooc.Common.IBridge;
 
 /// <summary>
 /// 升级系统桥接，依赖 REPOLib。

@@ -1,4 +1,4 @@
-﻿namespace Dinwlooc.Common.src.Bridge.IBridge;
+﻿namespace Dinwlooc.Common.IBridge;
 
 public interface INetworkBridge
 {

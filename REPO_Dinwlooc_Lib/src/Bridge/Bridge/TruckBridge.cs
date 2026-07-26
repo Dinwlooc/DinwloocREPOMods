@@ -1,5 +1,5 @@
 ﻿// Dinwlooc.Common/Bridge/TruckBridge.cs
-using Dinwlooc.Common.src.Bridge.IBridge;
+using Dinwlooc.Common.IBridge;
 using UnityEngine;
 
 namespace Dinwlooc.Common.Bridge

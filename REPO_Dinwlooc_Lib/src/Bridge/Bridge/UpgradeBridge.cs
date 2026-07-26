@@ -2,7 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
-using Dinwlooc.Common.src.Bridge.IBridge;
+using Dinwlooc.Common.IBridge;
 using REPOLib.Modules;  // 软引用，如果不存在则忽略
 
 namespace Dinwlooc.Common.Bridge

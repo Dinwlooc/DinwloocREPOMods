@@ -1,83 +1,114 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using Dinwlooc.Common.Caching;
+using System.IO;
 using Photon.Pun;
-using UnityEngine;
 
 namespace Dinwlooc.Common.Sync
 {
     /// <summary>
-    /// 同步缓存实现，支持多种同步模式，基于 Photon RPC 进行网络通信。
-    /// 必须由 SyncRegionManager 创建和管理。
+    /// 同步缓存实现。内部自动处理网络广播，业务层只需关注数据的读写。
     /// </summary>
     internal class SyncCache<TKey, TValue> : ISyncCache<TKey, TValue> where TKey : notnull
     {
-        private readonly ConcurrentDictionary<TKey, TValue> _cache = new();
+        // 常量
+        private const int DEFAULT_EXPIRATION_SECONDS = 0; // 0 表示永不过期
+
+        private readonly ConcurrentDictionary<TKey, TValue> _cache = new ConcurrentDictionary<TKey, TValue>();
         private readonly SyncMode _mode;
         private readonly string _cacheName;
-        private readonly PhotonView _photonView;
-
-        // 自定义合并函数（仅用于 Merge 模式）
         private readonly Func<TValue, TValue, TValue>? _mergeFunc;
+        private readonly ISerializationStrategy<TValue> _serializationStrategy;
 
         public event Action<TKey, TValue>? OnDataChanged;
-
         public SyncMode Mode => _mode;
+        public bool UseBinarySerialization => _serializationStrategy is BinaryStrategy<TValue>;
 
-        internal SyncCache(string cacheName, SyncMode mode, PhotonView photonView, Func<TValue, TValue, TValue>? mergeFunc = null)
+        internal SyncCache(
+            string cacheName,
+            SyncMode mode,
+            Func<TValue, TValue, TValue>? mergeFunc = null,
+            Action<BinaryWriter, TValue>? serialize = null,
+            Func<BinaryReader, TValue>? deserialize = null)
         {
             _cacheName = cacheName;
             _mode = mode;
-            _photonView = photonView;
             _mergeFunc = mergeFunc;
+
+            if (serialize != null && deserialize != null)
+            {
+                _serializationStrategy = new BinaryStrategy<TValue>(serialize, deserialize);
+            }
+            else
+            {
+                _serializationStrategy = new HashtableStrategy<TValue>();
+            }
         }
 
-        // ----- ICacheProvider 实现 -----
-        public bool TryGet(TKey key, out TValue value) => _cache.TryGetValue(key, out value);
+        public bool TryGet(TKey key, out TValue value)
+        {
+            return _cache.TryGetValue(key, out value);
+        }
 
         public void Set(TKey key, TValue value, TimeSpan? expiration = null)
         {
-            // 根据模式决定是否允许写入
             bool isHost = PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom;
-            bool canWrite = isHost || _mode == SyncMode.ClientSnapshot || _mode == SyncMode.Merge;
-
+            bool canWrite = isHost || (_mode == SyncMode.ClientSnapshot) || (_mode == SyncMode.Merge);
             if (!canWrite)
             {
-                // 非房主且在 HostAuthority 模式下，忽略写入
                 return;
             }
 
-            // 如果是客户端快照模式且键不是当前玩家 SteamID，可能需要限制，但由调用者决定
-            // 这里只做通用处理
             _cache[key] = value;
             OnDataChanged?.Invoke(key, value);
 
-            // 通知同步
-            if (isHost && (_mode == SyncMode.HostAuthority || _mode == SyncMode.Merge))
+            if (isHost && ((_mode == SyncMode.HostAuthority) || (_mode == SyncMode.Merge)))
             {
-                // 房主立即广播
-                SyncRegionManager.Instance.BroadcastData(_cacheName, key, value);
+                if (UseBinarySerialization)
+                {
+                    byte[] data = _serializationStrategy.SerializeToBinary(value);
+                    SyncRpcHelper.BroadcastDataBinary<TKey>(_cacheName, key, data);
+                }
+                else
+                {
+                    object data = _serializationStrategy.SerializeToObject(value);
+                    SyncRpcHelper.BroadcastData<TKey, object>(_cacheName, key, data);
+                }
             }
-            else if (_mode == SyncMode.ClientSnapshot && !isHost)
+            else if ((_mode == SyncMode.ClientSnapshot) && !isHost)
             {
-                // 客户端发送快照给房主（由 SyncRegionManager 定期收集，或立即发送）
-                SyncRegionManager.Instance.SendSnapshot(_cacheName, key, value);
+                if (UseBinarySerialization)
+                {
+                    byte[] data = _serializationStrategy.SerializeToBinary(value);
+                    SyncRpcHelper.SendSnapshotBinary<TKey>(_cacheName, key, data);
+                }
+                else
+                {
+                    object data = _serializationStrategy.SerializeToObject(value);
+                    SyncRpcHelper.SendSnapshot<TKey, object>(_cacheName, key, data);
+                }
             }
-            else if (_mode == SyncMode.Merge && !isHost)
+            else if ((_mode == SyncMode.Merge) && !isHost)
             {
-                // 客户端发送修改给房主，房主合并后广播
-                SyncRegionManager.Instance.SendMergeRequest(_cacheName, key, value);
+                if (UseBinarySerialization)
+                {
+                    byte[] data = _serializationStrategy.SerializeToBinary(value);
+                    SyncRpcHelper.SendMergeRequestBinary<TKey>(_cacheName, key, data);
+                }
+                else
+                {
+                    object data = _serializationStrategy.SerializeToObject(value);
+                    SyncRpcHelper.SendMergeRequest<TKey, object>(_cacheName, key, data);
+                }
             }
         }
 
         public bool Remove(TKey key)
         {
             bool removed = _cache.TryRemove(key, out _);
-            if (removed && PhotonNetwork.IsMasterClient && (_mode == SyncMode.HostAuthority || _mode == SyncMode.Merge))
+            if (removed && PhotonNetwork.IsMasterClient && ((_mode == SyncMode.HostAuthority) || (_mode == SyncMode.Merge)))
             {
-                // 房主同步删除
-                SyncRegionManager.Instance.BroadcastRemove(_cacheName, key);
+                SyncRpcHelper.BroadcastRemove<TKey>(_cacheName, key);
             }
             return removed;
         }
@@ -85,20 +116,62 @@ namespace Dinwlooc.Common.Sync
         public void Clear()
         {
             _cache.Clear();
-            if (PhotonNetwork.IsMasterClient && (_mode == SyncMode.HostAuthority || _mode == SyncMode.Merge))
+            if (PhotonNetwork.IsMasterClient && ((_mode == SyncMode.HostAuthority) || (_mode == SyncMode.Merge)))
             {
-                SyncRegionManager.Instance.BroadcastClear(_cacheName);
+                SyncRpcHelper.BroadcastClear(_cacheName);
             }
         }
 
         public void Refresh(TKey key)
         {
-            // 可延长过期时间，但当前不实现
+            // 业务场景暂未使用
         }
 
-        // ----- 内部同步方法 -----
+        public void SyncNow()
+        {
+            if (!PhotonNetwork.IsMasterClient && PhotonNetwork.InRoom)
+            {
+                return;
+            }
+
+            ConcurrentDictionary<TKey, TValue> snapshot = new ConcurrentDictionary<TKey, TValue>(_cache);
+            if (UseBinarySerialization)
+            {
+                Dictionary<object, byte[]> data = new Dictionary<object, byte[]>();
+                foreach (KeyValuePair<TKey, TValue> kv in snapshot)
+                {
+                    byte[] serialized = _serializationStrategy.SerializeToBinary(kv.Value);
+                    data[kv.Key!] = serialized;
+                }
+                SyncRpcHelper.BroadcastFullSnapshotBinary<TKey>(_cacheName, data);
+            }
+            else
+            {
+                ConcurrentDictionary<TKey, object> data = new ConcurrentDictionary<TKey, object>();
+                foreach (KeyValuePair<TKey, TValue> kv in snapshot)
+                {
+                    data[kv.Key] = _serializationStrategy.SerializeToObject(kv.Value);
+                }
+                SyncRpcHelper.BroadcastFullSnapshot<TKey, object>(_cacheName, data);
+            }
+        }
+
         internal void ApplyRemoteSet(TKey key, TValue value)
         {
+            _cache[key] = value;
+            OnDataChanged?.Invoke(key, value);
+        }
+
+        internal void ApplyRemoteSetBinary(TKey key, byte[] binaryData)
+        {
+            TValue value = _serializationStrategy.DeserializeFromBinary(binaryData);
+            _cache[key] = value;
+            OnDataChanged?.Invoke(key, value);
+        }
+
+        internal void ApplyRemoteSetObject(TKey key, object objectData)
+        {
+            TValue value = _serializationStrategy.DeserializeFromObject(objectData);
             _cache[key] = value;
             OnDataChanged?.Invoke(key, value);
         }
@@ -106,7 +179,6 @@ namespace Dinwlooc.Common.Sync
         internal void ApplyRemoteRemove(TKey key)
         {
             _cache.TryRemove(key, out _);
-            // 没有事件，但可考虑触发
         }
 
         internal void ApplyRemoteClear()
@@ -114,18 +186,24 @@ namespace Dinwlooc.Common.Sync
             _cache.Clear();
         }
 
-        // ----- 强制同步 -----
-        public void SyncNow()
+        internal Dictionary<object, object> GetAllDataAsObjects()
         {
-            if (!PhotonNetwork.IsMasterClient && PhotonNetwork.InRoom)
-                return;
-
-            // 发送全量数据
-            var snapshot = new Dictionary<TKey, TValue>(_cache);
-            SyncRegionManager.Instance.BroadcastFullSnapshot(_cacheName, snapshot);
+            Dictionary<object, object> result = new Dictionary<object, object>();
+            foreach (KeyValuePair<TKey, TValue> kv in _cache)
+            {
+                result[kv.Key!] = _serializationStrategy.SerializeToObject(kv.Value);
+            }
+            return result;
         }
 
-        // ----- 获取所有数据（用于快照）-----
-        internal Dictionary<TKey, TValue> GetAllData() => new(_cache);
+        internal Dictionary<object, byte[]> GetAllDataAsBinary()
+        {
+            Dictionary<object, byte[]> result = new Dictionary<object, byte[]>();
+            foreach (KeyValuePair<TKey, TValue> kv in _cache)
+            {
+                result[kv.Key!] = _serializationStrategy.SerializeToBinary(kv.Value);
+            }
+            return result;
+        }
     }
 }

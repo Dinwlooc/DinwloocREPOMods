@@ -1,6 +1,6 @@
 ﻿// Dinwlooc.Common/Bridge/CoreBridge.cs
 using System;
-using Dinwlooc.Common.src.Bridge.IBridge;
+using Dinwlooc.Common.IBridge;
 using Photon.Pun;
 using UnityEngine;
 using UnityEngine.SceneManagement;

@@ -1,5 +1,5 @@
 ﻿using Dinwlooc.Common.Bridge;
-using Dinwlooc.Common.src.Bridge.IBridge;
+using Dinwlooc.Common.IBridge;
 using UnityEngine;
 
 namespace SuperEnergy

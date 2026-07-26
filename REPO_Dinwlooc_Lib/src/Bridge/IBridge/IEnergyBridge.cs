@@ -1,7 +1,7 @@
 ﻿// 文件：Dinwlooc.Common/src/Bridge/IBridge/IEnergyBridge.cs
 using UnityEngine;
 
-namespace Dinwlooc.Common.src.Bridge.IBridge
+namespace Dinwlooc.Common.IBridge
 {
     /// <summary>
     /// 玩家体力（能量）控制桥接接口。

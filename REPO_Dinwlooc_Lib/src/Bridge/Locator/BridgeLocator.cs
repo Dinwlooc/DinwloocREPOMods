@@ -1,7 +1,7 @@
 ﻿// Dinwlooc.Common/Bridge/BridgeLocator.cs
 using System;
 using System.Collections.Generic;
-using Dinwlooc.Common.src.Bridge.IBridge;
+using Dinwlooc.Common.IBridge;
 
 namespace Dinwlooc.Common.Bridge
 {

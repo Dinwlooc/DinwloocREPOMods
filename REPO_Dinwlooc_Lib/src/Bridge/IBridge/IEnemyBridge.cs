@@ -1,7 +1,7 @@
 ﻿using System.Collections.Generic;
 using UnityEngine;
 
-namespace Dinwlooc.Common.src.Bridge.IBridge
+namespace Dinwlooc.Common.IBridge
 {
     /// <summary>
     /// 敌人系统桥接接口，用于解耦怪物操作
@@ -14,7 +14,7 @@ namespace Dinwlooc.Common.src.Bridge.IBridge
         /// <summary>判断敌人是否有效（存在、已生成、存活、激活）</summary>
         bool IsEnemyValid(EnemyParent enemy);
 
-        /// <summary>获取敌人的世界坐标（通常为中心点）</summary>
+        /// <summary>获取敌人的世界坐标（通常为中心点）</summary>  
         Vector3 GetEnemyPosition(EnemyParent enemy);
 
         /// <summary>获取敌人的 InstanceID</summary>
