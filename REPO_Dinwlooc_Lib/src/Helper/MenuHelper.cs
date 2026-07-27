@@ -1,29 +1,22 @@
 ﻿using System;
 using BepInEx.Configuration;
-using MenuLib;
-using UnityEngine;
+using Dinwlooc.Common.Bridge;
 
-namespace Dinwlooc.Common.Helpers;
-
-public static class MenuHelper
+namespace Dinwlooc.Common.Helpers
 {
-    public static void AddEscapeMenuButton(
-        string text,
-        Action onClick,
-        ConfigEntry<bool>? enabledConfig = null,
-        ConfigEntry<int>? posXConfig = null,
-        ConfigEntry<int>? posYConfig = null)
+    public static class MenuHelper
     {
-        if (enabledConfig != null && !enabledConfig.Value)
-            return;
-
-        float x = posXConfig?.Value ?? 200f;
-        float y = posYConfig?.Value ?? 100f;
-
-        MenuAPI.AddElementToEscapeMenu(parent =>
+        /// <summary>
+        /// 向 ESC 菜单添加按钮，若 MenuLib 未安装则静默忽略。
+        /// </summary>
+        public static void AddEscapeMenuButton(
+            string text,
+            Action onClick,
+            ConfigEntry<bool>? enabledConfig = null,
+            ConfigEntry<int>? posXConfig = null,
+            ConfigEntry<int>? posYConfig = null)
         {
-            var button = MenuAPI.CreateREPOButton(text, onClick, parent, new Vector2(x, y));
-            button.gameObject.SetActive(true);
-        });
+            BridgeLocator.Menu.AddEscapeMenuButton(text, onClick, enabledConfig, posXConfig, posYConfig);
+        }
     }
 }

@@ -2,6 +2,8 @@
 using System;
 using System.Reflection;
 using Dinwlooc.Common.IBridge;
+using Dinwlooc.Common.Reflection;
+using Photon.Pun;
 using UnityEngine;
 
 namespace Dinwlooc.Common.Bridge
@@ -11,19 +13,6 @@ namespace Dinwlooc.Common.Bridge
         private static ItemBridge? _instance;
         public static ItemBridge Instance => _instance ??= new ItemBridge();
         private ItemBridge() { }
-
-        // 医疗包反射缓存
-        private static MethodInfo? _usedRPCMethod;
-        private static FieldInfo? _usedField;
-        private static FieldInfo? _itemToggleField;
-
-        static ItemBridge()
-        {
-            var hpType = typeof(ItemHealthPack);
-            _usedRPCMethod = hpType.GetMethod("UsedRPC", BindingFlags.NonPublic | BindingFlags.Instance);
-            _usedField = hpType.GetField("used", BindingFlags.NonPublic | BindingFlags.Instance);
-            _itemToggleField = hpType.GetField("itemToggle", BindingFlags.NonPublic | BindingFlags.Instance);
-        }
 
         // ---------- IItemBridge ----------
         public ItemBattery? GetHeldItemBattery(PlayerAvatar player)
@@ -62,10 +51,10 @@ namespace Dinwlooc.Common.Bridge
             if (ItemManager.instance == null) return null;
             ItemHealthPack? nearest = null;
             float nearestDist = radius;
-            foreach (var item in ItemManager.instance.spawnedItems)
+            foreach (ItemAttributes item in ItemManager.instance.spawnedItems)
             {
                 if (item == null || item.itemType != SemiFunc.itemType.healthPack) continue;
-                var hp = item.GetComponent<ItemHealthPack>();
+                ItemHealthPack hp = item.GetComponent<ItemHealthPack>();
                 if (hp == null || !IsHealthPackUsable(hp)) continue;
                 float dist = Vector3.Distance(item.transform.position, position);
                 if (dist < nearestDist)
@@ -81,9 +70,10 @@ namespace Dinwlooc.Common.Bridge
         {
             if (healthPack == null) return false;
             if (healthPack.healAmount <= 0) return false;
-            if (_usedField != null)
+            FieldInfo usedField = ReflectionCache.ItemHealthPack_used;
+            if (usedField != null)
             {
-                try { if ((bool)_usedField.GetValue(healthPack)) return false; }
+                try { if ((bool)usedField.GetValue(healthPack)) return false; }
                 catch { /* 忽略 */ }
             }
             return true;
@@ -102,27 +92,30 @@ namespace Dinwlooc.Common.Bridge
             if (healthPack.healAmount <= 0)
             {
                 healthPack.healAmount = 0;
-                if (_usedField != null)
+                FieldInfo usedField = ReflectionCache.ItemHealthPack_used;
+                if (usedField != null)
                 {
-                    try { _usedField.SetValue(healthPack, true); }
+                    try { usedField.SetValue(healthPack, true); }
                     catch { /* 忽略 */ }
                 }
 
                 // 触发原版 UsedRPC
+                MethodInfo usedRPCMethod = ReflectionCache.ItemHealthPack_UsedRPC;
                 if (SemiFunc.IsMultiplayer() && healthPack.photonView != null)
                 {
-                    healthPack.photonView.RPC("UsedRPC", Photon.Pun.RpcTarget.All);
+                    healthPack.photonView.RPC("UsedRPC", RpcTarget.All);
                 }
-                else if (_usedRPCMethod != null)
+                else if (usedRPCMethod != null)
                 {
-                    try { _usedRPCMethod.Invoke(healthPack, new object[] { default(Photon.Pun.PhotonMessageInfo) }); }
+                    try { usedRPCMethod.Invoke(healthPack, new object[] { default(PhotonMessageInfo) }); }
                     catch { /* 降级处理 */ }
                 }
 
                 // 禁用 ItemToggle（保险）
-                if (_itemToggleField != null)
+                FieldInfo itemToggleField = ReflectionCache.ItemHealthPack_itemToggle;
+                if (itemToggleField != null)
                 {
-                    var itemToggle = _itemToggleField.GetValue(healthPack) as ItemToggle;
+                    ItemToggle itemToggle = itemToggleField.GetValue(healthPack) as ItemToggle;
                     itemToggle?.ToggleDisable(true);
                 }
             }
@@ -132,7 +125,7 @@ namespace Dinwlooc.Common.Bridge
 
         public void ConsumeHealthPack(ItemAttributes healthPack)
         {
-            var hp = healthPack?.GetComponent<ItemHealthPack>();
+            ItemHealthPack hp = healthPack?.GetComponent<ItemHealthPack>();
             if (hp == null) return;
             UseHealthPack(hp, hp.healAmount);
         }

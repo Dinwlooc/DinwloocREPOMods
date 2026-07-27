@@ -63,6 +63,9 @@
 			<Private>False</Private>
 		</Reference>
 	</ItemGroup>
+	<ItemGroup>
+	  <Folder Include="src\新文件夹\" />
+	</ItemGroup>
 
 	<!-- 发布任务（可选）：在 Release 编译时生成可分发包 -->
 	<Target Name="PreparePublish" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">

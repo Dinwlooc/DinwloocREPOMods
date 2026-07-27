@@ -1,6 +1,8 @@
 ﻿// Dinwlooc.Common/Bridge/CoreBridge.cs
 using System;
+using System.Reflection;
 using Dinwlooc.Common.IBridge;
+using Dinwlooc.Common.Reflection;
 using Photon.Pun;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -27,10 +29,9 @@ namespace Dinwlooc.Common.Bridge
         {
             try
             {
-                var stats = StatsManager.instance;
+                StatsManager stats = StatsManager.instance;
                 if (stats == null) return null;
-                var field = stats.GetType().GetField("saveFileCurrent",
-                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                FieldInfo field = ReflectionCache.StatsManager_saveFileCurrent;
                 return field?.GetValue(stats) as string;
             }
             catch { return null; }

@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Reflection;
 using Dinwlooc.Common.IBridge;
+using Dinwlooc.Common.Reflection;
 using UnityEngine;
 
 namespace Dinwlooc.Common.Bridge
@@ -11,23 +12,6 @@ namespace Dinwlooc.Common.Bridge
         private static PlayerBridge? _instance;
         public static PlayerBridge Instance => _instance ??= new PlayerBridge();
         private PlayerBridge() { }
-
-        // 反射字段缓存（用于自然恢复相关）
-        private static FieldInfo? _sprintRechargeAmountField;
-        private static FieldInfo? _sprintRechargeTimerField;
-        private static FieldInfo? _sprintRechargeTimeField;
-        private static FieldInfo? _energySprintDrainField;
-        private static FieldInfo? _sprintSpeedUpgradesField;
-
-        static PlayerBridge()
-        {
-            var type = typeof(PlayerController);
-            _sprintRechargeAmountField = type.GetField("sprintRechargeAmount", BindingFlags.Instance | BindingFlags.NonPublic);
-            _sprintRechargeTimerField = type.GetField("sprintRechargeTimer", BindingFlags.Instance | BindingFlags.NonPublic);
-            _sprintRechargeTimeField = type.GetField("sprintRechargeTime", BindingFlags.Instance | BindingFlags.NonPublic);
-            _energySprintDrainField = type.GetField("EnergySprintDrain", BindingFlags.Instance | BindingFlags.Public);
-            _sprintSpeedUpgradesField = type.GetField("SprintSpeedUpgrades", BindingFlags.Instance | BindingFlags.Public);
-        }
 
         // 获取 PlayerController 实例（仅本地玩家有效）
         private PlayerController? GetController(PlayerAvatar player)
@@ -42,7 +26,7 @@ namespace Dinwlooc.Common.Bridge
         {
             var list = new List<PlayerAvatar>();
             if (GameDirector.instance == null) return list;
-            foreach (var p in GameDirector.instance.PlayerList)
+            foreach (PlayerAvatar p in GameDirector.instance.PlayerList)
             {
                 if (p != null && !p.isDisabled)
                     list.Add(p);
@@ -82,23 +66,22 @@ namespace Dinwlooc.Common.Bridge
         // ---- 基础属性 ----
         public float GetCurrentEnergy(PlayerAvatar player)
         {
-            var ctrl = GetController(player);
+            PlayerController ctrl = GetController(player);
             if (ctrl == null) return 0f;
             return ctrl.EnergyCurrent;
         }
 
         public float GetMaxEnergy(PlayerAvatar player)
         {
-            var ctrl = GetController(player);
+            PlayerController ctrl = GetController(player);
             if (ctrl == null) return 100f;
             return ctrl.EnergyStart;
         }
 
         public void SetEnergy(PlayerAvatar player, float value)
         {
-            var ctrl = GetController(player);
+            PlayerController ctrl = GetController(player);
             if (ctrl == null) return;
-            // 体力是本地玩家属性，任何人可以直接修改自己的体力，无需主机权限
             float max = ctrl.EnergyStart;
             ctrl.EnergyCurrent = Mathf.Clamp(value, 0f, max);
         }
@@ -114,7 +97,7 @@ namespace Dinwlooc.Common.Bridge
         public bool CanRegen(PlayerAvatar player)
         {
             if (!player.isLocal) return false;
-            var ctrl = PlayerController.instance;
+            PlayerController ctrl = PlayerController.instance;
             if (ctrl == null) return false;
             if (ctrl.sprinting) return false;
             if (GetSprintRechargeTimer(player) > 0f) return false;
@@ -125,13 +108,14 @@ namespace Dinwlooc.Common.Bridge
         public float GetStandingRegenRate(PlayerAvatar player)
         {
             if (!player.isLocal) return 0f;
-            var ctrl = PlayerController.instance;
+            PlayerController ctrl = PlayerController.instance;
             if (ctrl == null) return 2f;
             float baseRate = 2f;
             try
             {
-                if (_sprintRechargeAmountField != null)
-                    baseRate = (float)_sprintRechargeAmountField.GetValue(ctrl);
+                FieldInfo field = ReflectionCache.PlayerController_sprintRechargeAmount;
+                if (field != null)
+                    baseRate = (float)field.GetValue(ctrl);
             }
             catch { /* 忽略 */ }
             if (SemiFunc.RunIsArena()) baseRate *= 5f;
@@ -141,7 +125,7 @@ namespace Dinwlooc.Common.Bridge
         public float GetSprintDrainRate(PlayerAvatar player)
         {
             if (!player.isLocal) return 0f;
-            var ctrl = PlayerController.instance;
+            PlayerController ctrl = PlayerController.instance;
             if (ctrl == null) return 1f;
             float drain = ctrl.EnergySprintDrain;
             drain += ctrl.SprintSpeedUpgrades;
@@ -151,12 +135,13 @@ namespace Dinwlooc.Common.Bridge
         public float GetSprintRechargeTimer(PlayerAvatar player)
         {
             if (!player.isLocal) return 0f;
-            var ctrl = PlayerController.instance;
+            PlayerController ctrl = PlayerController.instance;
             if (ctrl == null) return 0f;
             try
             {
-                if (_sprintRechargeTimerField != null)
-                    return (float)_sprintRechargeTimerField.GetValue(ctrl);
+                FieldInfo field = ReflectionCache.PlayerController_sprintRechargeTimer;
+                if (field != null)
+                    return (float)field.GetValue(ctrl);
             }
             catch { /* 忽略 */ }
             return 0f;
@@ -165,12 +150,13 @@ namespace Dinwlooc.Common.Bridge
         public void ResetSprintRechargeTimer(PlayerAvatar player)
         {
             if (!player.isLocal) return;
-            var ctrl = PlayerController.instance;
+            PlayerController ctrl = PlayerController.instance;
             if (ctrl == null) return;
             try
             {
-                if (_sprintRechargeTimerField != null)
-                    _sprintRechargeTimerField.SetValue(ctrl, GetSprintRechargeTime(player));
+                FieldInfo field = ReflectionCache.PlayerController_sprintRechargeTimer;
+                if (field != null)
+                    field.SetValue(ctrl, GetSprintRechargeTime(player));
             }
             catch { /* 忽略 */ }
         }
@@ -178,12 +164,13 @@ namespace Dinwlooc.Common.Bridge
         public float GetSprintRechargeTime(PlayerAvatar player)
         {
             if (!player.isLocal) return 1f;
-            var ctrl = PlayerController.instance;
+            PlayerController ctrl = PlayerController.instance;
             if (ctrl == null) return 1f;
             try
             {
-                if (_sprintRechargeTimeField != null)
-                    return (float)_sprintRechargeTimeField.GetValue(ctrl);
+                FieldInfo field = ReflectionCache.PlayerController_sprintRechargeTime;
+                if (field != null)
+                    return (float)field.GetValue(ctrl);
             }
             catch { /* 忽略 */ }
             return 1f;
@@ -205,18 +192,15 @@ namespace Dinwlooc.Common.Bridge
         public float GetCrouchRegenRate(PlayerAvatar player)
         {
             if (player == null) return 0f;
-            // 必须下蹲/爬行且非滑铲
             if (!player.isCrouching && !player.isCrawling) return 0f;
             if (player.isSliding) return 0f;
 
-            // 翻滚限制
             if (player.isTumbling)
             {
                 if (player.tumble.notMovingTimer < 1f) return 0f;
                 if (player.physGrabber.grabState == PhysGrabber.GrabState.Climb) return 0f;
             }
 
-            // 仅本地玩家有效
             if (!player.isLocal) return 0f;
 
             float rate = 1f + player.upgradeCrouchRest;

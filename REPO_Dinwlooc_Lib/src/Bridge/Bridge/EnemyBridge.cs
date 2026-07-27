@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Reflection;
 using Dinwlooc.Common.IBridge;
+using Dinwlooc.Common.Reflection;
 using UnityEngine;
 
 namespace Dinwlooc.Common.Bridge
@@ -11,8 +12,6 @@ namespace Dinwlooc.Common.Bridge
         private static EnemyBridge? _instance;
         public static EnemyBridge Instance => _instance ??= new EnemyBridge();
         private EnemyBridge() { }
-
-        private static FieldInfo? _rigidField;
 
         public IReadOnlyList<EnemyParent> GetAllEnemies()
         {
@@ -142,16 +141,10 @@ namespace Dinwlooc.Common.Bridge
             }
             Enemy enemyComp = enemy.Enemy;
 
-            if (_rigidField == null)
-            {
-                _rigidField = typeof(Enemy).GetField("Rigidbody",
-                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public |
-                    System.Reflection.BindingFlags.NonPublic);
-            }
-
+            FieldInfo rigidField = ReflectionCache.Enemy_Rigidbody;
             try
             {
-                EnemyRigidbody? rigid = _rigidField?.GetValue(enemyComp) as EnemyRigidbody;
+                EnemyRigidbody? rigid = rigidField?.GetValue(enemyComp) as EnemyRigidbody;
                 if (rigid != null)
                 {
                     Collider[] colliders = rigid.GetComponentsInChildren<Collider>();

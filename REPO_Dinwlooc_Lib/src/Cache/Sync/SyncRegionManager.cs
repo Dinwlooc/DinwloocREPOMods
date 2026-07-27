@@ -13,28 +13,12 @@ using UnityEngine;
 
 namespace Dinwlooc.Common.Sync
 {
-    /// <summary>
-    /// 推送模式，决定在哪些场景自动向新玩家推送全量数据。
-    /// </summary>
     public enum PushMode
     {
-        /// <summary>
-        /// 仅在游戏关卡（Level）场景中推送。
-        /// </summary>
         LevelOnly,
-
-        /// <summary>
-        /// 在所有场景（包括商店、大厅等）中推送。
-        /// </summary>
         AllScenes
     }
 
-    /// <summary>
-    /// 同步区域管理器，负责管理所有同步缓存的生命周期和网络事件。
-    /// 采用懒加载，仅在首次调用 GetOrCreateSyncCache 时创建实例。
-    /// 自动处理房间切换和主机变更，确保缓存数据与当前房间状态一致。
-    /// 提供推送模式配置，支持全场景或仅关卡自动推送。
-    /// </summary>
     public class SyncRegionManager : MonoBehaviourPunCallbacks
     {
         private static SyncRegionManager? _instance;
@@ -63,7 +47,8 @@ namespace Dinwlooc.Common.Sync
             }
         }
 
-        internal readonly ConcurrentDictionary<string, object> SyncCaches = new ConcurrentDictionary<string, object>();
+        // 存储非泛型 ISyncCache 供 RPC 处理器使用
+        internal readonly ConcurrentDictionary<string, ISyncCache> SyncCaches = new ConcurrentDictionary<string, ISyncCache>();
 
         private const int PUSH_STEP = 10;
         private PushMode _pushMode = PushMode.LevelOnly;
@@ -78,11 +63,9 @@ namespace Dinwlooc.Common.Sync
             _instance = this;
             DontDestroyOnLoad(gameObject);
 
-            // 注册两个生成器的步长（仅一次，重复调用无副作用）
             PlayerLevelEnterEventGenerator.Instance.RegisterStep(PUSH_STEP);
             PlayerJoinedEventGenerator.Instance.RegisterStep(PUSH_STEP);
 
-            // 订阅两类事件，由推送模式决定实际处理
             EventBus.Subscribe<PlayerLevelEnteredEvent>(OnPlayerLevelEntered);
             EventBus.Subscribe<PlayerJoinedEvent>(OnPlayerJoined);
         }
@@ -91,12 +74,8 @@ namespace Dinwlooc.Common.Sync
         {
             EventBus.Unsubscribe<PlayerLevelEnteredEvent>(OnPlayerLevelEntered);
             EventBus.Unsubscribe<PlayerJoinedEvent>(OnPlayerJoined);
-            // 可选：取消生成器步长注册（但通常不必要，因为生成器是全局的）
         }
 
-        /// <summary>
-        /// 设置推送模式，决定向新玩家推送全量数据的场景范围。
-        /// </summary>
         public void SetPushMode(PushMode mode)
         {
             _pushMode = mode;
@@ -110,7 +89,8 @@ namespace Dinwlooc.Common.Sync
             Action<BinaryWriter, TValue>? serialize = null,
             Func<BinaryReader, TValue>? deserialize = null) where TKey : notnull
         {
-            if (SyncCaches.TryGetValue(cacheName, out object existing))
+            // 修复：使用 out ISyncCache 而非 out object
+            if (SyncCaches.TryGetValue(cacheName, out ISyncCache existing))
             {
                 if (existing is SyncCache<TKey, TValue> typed)
                     return typed;
@@ -123,29 +103,15 @@ namespace Dinwlooc.Common.Sync
             return newCache;
         }
 
-        /// <summary>
-        /// 清空所有同步缓存的数据（用于房间切换或重置）。
-        /// </summary>
         public void ClearAllCaches()
         {
-            foreach (KeyValuePair<string, object> kv in SyncCaches)
+            foreach (KeyValuePair<string, ISyncCache> kv in SyncCaches)
             {
-                object cacheObj = kv.Value;
-                if (cacheObj is ICacheProvider<object, object> typedCache)
-                {
-                    typedCache.Clear();
-                }
-                else
-                {
-                    Type cacheType = cacheObj.GetType();
-                    MethodInfo? clearMethod = cacheType.GetMethod("Clear", BindingFlags.Public | BindingFlags.Instance);
-                    clearMethod?.Invoke(cacheObj, null);
-                }
+                kv.Value.ApplyRemoteClear();
             }
             Core.CommonPlugin.Logger.LogInfo("SyncRegionManager: 已清空所有同步缓存数据。");
         }
 
-        // ----- 事件处理：根据推送模式决定是否推送 -----
         private void OnPlayerLevelEntered(PlayerLevelEnteredEvent evt)
         {
             if (_pushMode != PushMode.LevelOnly)
@@ -164,28 +130,27 @@ namespace Dinwlooc.Common.Sync
             PushFullSnapshotToPlayer(evt.Player);
         }
 
-        // ----- 封装的全量推送逻辑 -----
         private void PushFullSnapshotToPlayer(PlayerAvatar player)
         {
             if (player == null) return;
             if (SyncCaches.Count == 0) return;
 
             int targetViewId = player.photonView.ViewID;
-            foreach (KeyValuePair<string, object> kv in SyncCaches)
+            foreach (KeyValuePair<string, ISyncCache> kv in SyncCaches)
             {
                 string cacheName = kv.Key;
-                object cacheObj = kv.Value;
-                Type cacheType = cacheObj.GetType();
+                ISyncCache cache = kv.Value;
+                Type cacheType = cache.GetType();
 
                 PropertyInfo useBinaryProp = cacheType.GetProperty("UseBinarySerialization");
-                bool useBinary = useBinaryProp != null && (bool)useBinaryProp.GetValue(cacheObj);
+                bool useBinary = useBinaryProp != null && (bool)useBinaryProp.GetValue(cache)!;
 
                 if (useBinary)
                 {
                     MethodInfo? getAllBinary = cacheType.GetMethod("GetAllDataAsBinary", BindingFlags.NonPublic | BindingFlags.Instance);
                     if (getAllBinary != null)
                     {
-                        Dictionary<object, byte[]> binaryData = (Dictionary<object, byte[]>)getAllBinary.Invoke(cacheObj, null)!;
+                        Dictionary<object, byte[]> binaryData = (Dictionary<object, byte[]>)getAllBinary.Invoke(cache, null)!;
                         SyncRpcModule.SendFullSnapshotBinaryToPlayer(cacheName, binaryData, targetViewId);
                     }
                 }
@@ -194,7 +159,7 @@ namespace Dinwlooc.Common.Sync
                     MethodInfo? getAllObjects = cacheType.GetMethod("GetAllDataAsObjects", BindingFlags.NonPublic | BindingFlags.Instance);
                     if (getAllObjects != null)
                     {
-                        Dictionary<object, object> objectData = (Dictionary<object, object>)getAllObjects.Invoke(cacheObj, null)!;
+                        Dictionary<object, object> objectData = (Dictionary<object, object>)getAllObjects.Invoke(cache, null)!;
                         Hashtable hashtable = new Hashtable();
                         foreach (KeyValuePair<object, object> entry in objectData)
                         {
@@ -206,10 +171,8 @@ namespace Dinwlooc.Common.Sync
             }
         }
 
-        // ----- Photon 回调（继承自 MonoBehaviourPunCallbacks）-----
         public override void OnMasterClientSwitched(Player newMaster)
         {
-            // 无论主机切换到自己还是别人，都清空缓存（旧主机数据已失效）
             ClearAllCaches();
             EventBus.Publish(new MasterClientSwitchedEvent());
             Core.CommonPlugin.Logger.LogInfo($"SyncRegionManager: 主机切换为 {newMaster.NickName}，缓存已清空。");
@@ -233,8 +196,5 @@ namespace Dinwlooc.Common.Sync
         }
     }
 
-    /// <summary>
-    /// 主机切换事件，供模组监听并重新推送配置。
-    /// </summary>
     public struct MasterClientSwitchedEvent { }
 }

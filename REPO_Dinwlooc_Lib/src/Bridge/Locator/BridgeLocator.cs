@@ -1,5 +1,4 @@
-﻿// Dinwlooc.Common/Bridge/BridgeLocator.cs
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Dinwlooc.Common.IBridge;
 
@@ -30,7 +29,7 @@ namespace Dinwlooc.Common.Bridge
             }
         }
 
-        // 便捷属性（若未注册则抛出异常，或返回 null，由调用者决定）
+        // 便捷属性
         public static IPlayerBridge Player => Get<IPlayerBridge>()
             ?? throw new InvalidOperationException("IPlayerBridge not registered.");
         public static IGameStateBridge GameState => Get<IGameStateBridge>()
@@ -51,5 +50,7 @@ namespace Dinwlooc.Common.Bridge
             ?? throw new InvalidOperationException("IEnemyBridge not registered.");
         public static IEnergyBridge Energy => Get<IEnergyBridge>()
             ?? throw new InvalidOperationException("IEnergyBridge not registered.");
+        public static IMenuBridge Menu => Get<IMenuBridge>()
+            ?? throw new InvalidOperationException("IMenuBridge not registered.");
     }
 }

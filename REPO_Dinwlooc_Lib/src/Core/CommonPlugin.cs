@@ -9,7 +9,7 @@ namespace Dinwlooc.Common.Core
 {
     [BepInPlugin(PluginInfo.PLUGIN_GUID, PluginInfo.PLUGIN_NAME, PluginInfo.PLUGIN_VERSION)]
     [BepInDependency(REPOLib.MyPluginInfo.PLUGIN_GUID, BepInDependency.DependencyFlags.SoftDependency)]
-    [BepInDependency("nickklmao.menulib")]
+    [BepInDependency("nickklmao.menulib", BepInDependency.DependencyFlags.SoftDependency)]
     public class CommonPlugin : BaseUnityPlugin
     {
         internal new static ManualLogSource Logger { get; private set; } = null!;
@@ -18,7 +18,7 @@ namespace Dinwlooc.Common.Core
         {
             Logger = base.Logger;
 
-            // 注册所有桥接器（单例）
+            // 注册所有桥接器
             BridgeLocator.Register<IGameStateBridge>(CoreBridge.Instance);
             BridgeLocator.Register<ISaveLoadBridge>(CoreBridge.Instance);
             BridgeLocator.Register<INetworkBridge>(CoreBridge.Instance);
@@ -32,6 +32,9 @@ namespace Dinwlooc.Common.Core
             BridgeLocator.Register<ITruckBridge>(TruckBridge.Instance);
             BridgeLocator.Register<IUpgradeBridge>(UpgradeBridge.Instance);
             BridgeLocator.Register<IEnemyBridge>(EnemyBridge.Instance);
+
+            // 注册 MenuBridge（内部自动处理 MenuLib 检测）
+            BridgeLocator.Register<IMenuBridge>(MenuBridge.Instance);
 
             // 挂载公共服务
             var go = new GameObject(nameof(CommonService));
