@@ -6,9 +6,6 @@ using UnityEngine;
 
 namespace Dinwlooc.Common.Core
 {
-    /// <summary>
-    /// 检测玩家死亡并发布 PlayerDiedEvent
-    /// </summary>
     public class PlayerDeathEventGenerator : EventGeneratorBase<PlayerDiedEvent>
     {
         private static PlayerDeathEventGenerator? _instance;
@@ -18,7 +15,7 @@ namespace Dinwlooc.Common.Core
             {
                 if (_instance == null)
                 {
-                    var go = new GameObject(nameof(PlayerDeathEventGenerator));
+                    GameObject go = new GameObject(nameof(PlayerDeathEventGenerator));
                     DontDestroyOnLoad(go);
                     _instance = go.AddComponent<PlayerDeathEventGenerator>();
                 }
@@ -27,7 +24,8 @@ namespace Dinwlooc.Common.Core
         }
 
         private IPlayerBridge _playerBridge = null!;
-        private Dictionary<int, int> _lastHealth = new(); // instanceId -> health
+        private Dictionary<int, int> _lastHealth = new Dictionary<int, int>();
+        private Dictionary<int, int> _currentHealth = new Dictionary<int, int>();
 
         private void Awake()
         {
@@ -45,26 +43,24 @@ namespace Dinwlooc.Common.Core
         {
             if (!SemiFunc.RunIsLevel()) return;
 
-            var players = _playerBridge.GetAllPlayers();
+            List<PlayerAvatar> players = _playerBridge.GetAllPlayers();
             if (players == null || players.Count == 0)
             {
-                // 无玩家时清空缓存
                 _lastHealth.Clear();
                 return;
             }
 
-            // 构建当前玩家健康快照
-            var currentHealth = new Dictionary<int, int>();
-            foreach (var p in players)
+            // 复用字典
+            _currentHealth.Clear();
+            foreach (PlayerAvatar p in players)
             {
                 if (p == null) continue;
                 int id = p.GetInstanceID();
                 int health = p.playerHealth?.health ?? 0;
-                currentHealth[id] = health;
+                _currentHealth[id] = health;
             }
 
-            // 检测死亡（上次健康 > 0 且 当前健康 <= 0）
-            foreach (var kv in currentHealth)
+            foreach (KeyValuePair<int, int> kv in _currentHealth)
             {
                 int id = kv.Key;
                 int current = kv.Value;
@@ -72,7 +68,6 @@ namespace Dinwlooc.Common.Core
                 {
                     if (last > 0 && current <= 0)
                     {
-                        // 找到玩家对象
                         PlayerAvatar? player = players.Find(p => p != null && p.GetInstanceID() == id);
                         if (player != null)
                         {
@@ -82,8 +77,8 @@ namespace Dinwlooc.Common.Core
                 }
             }
 
-            // 更新缓存
-            _lastHealth = currentHealth;
+            // 交换引用，而非复制
+            (_lastHealth, _currentHealth) = (_currentHealth, _lastHealth);
         }
     }
 }

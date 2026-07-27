@@ -33,10 +33,7 @@ namespace Dinwlooc.Common.Sync
             }
         }
 
-        // 公开只读属性，供 SyncRpcProcessor 访问
-        public IReadOnlyDictionary<string, ISyncCache> SyncCaches => _caches;
-
-        private readonly ConcurrentDictionary<string, ISyncCache> _caches = new ConcurrentDictionary<string, ISyncCache>();
+        internal readonly ConcurrentDictionary<string, ISyncCache> SyncCaches = new ConcurrentDictionary<string, ISyncCache>();
         private bool _isNetworkReady = false;
 
         private void Awake()
@@ -66,7 +63,7 @@ namespace Dinwlooc.Common.Sync
             Action<BinaryWriter, TValue>? serialize = null,
             Func<BinaryReader, TValue>? deserialize = null) where TKey : notnull
         {
-            if (_caches.TryGetValue(cacheName, out ISyncCache existing))
+            if (SyncCaches.TryGetValue(cacheName, out ISyncCache existing))
             {
                 if (existing is SyncCache<TKey, TValue> typed)
                 {
@@ -76,7 +73,7 @@ namespace Dinwlooc.Common.Sync
             }
 
             SyncCache<TKey, TValue> newCache = new SyncCache<TKey, TValue>(cacheName, mode, mergeFunc, serialize, deserialize);
-            _caches[cacheName] = newCache;
+            SyncCaches[cacheName] = newCache;
 
             newCache.OnDataChanged += (key, value) =>
             {
@@ -150,9 +147,16 @@ namespace Dinwlooc.Common.Sync
             return newCache;
         }
 
+        public bool TryGetCache(string cacheName, out ISyncCache cache)
+        {
+            return SyncCaches.TryGetValue(cacheName, out cache);
+        }
+
         public override void OnJoinedRoom()
         {
             _isNetworkReady = true;
+            // 重置 SyncRpcModule 以确保监听器被正确注册（处理网络重连）
+            SyncRpcModule.Reset();
             Core.CommonPlugin.Logger.LogInfo("SyncRegionManager 已加入房间，网络就绪。");
         }
 

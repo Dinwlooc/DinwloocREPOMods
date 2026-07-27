@@ -8,10 +8,6 @@ using Photon.Realtime;
 
 namespace Dinwlooc.Common.Sync
 {
-    /// <summary>
-    /// 同步 RPC 通信模块，纯惰性初始化。
-    /// 仅在首次发送事件时尝试注册监听器，且仅当 Photon 已连接并加入房间时才实际发送。
-    /// </summary>
     public static class SyncRpcModule
     {
         private const byte FALLBACK_EVENT_CODE = 200;
@@ -39,6 +35,26 @@ namespace Dinwlooc.Common.Sync
             ReceiveFullSnapshotBinary
         }
 
+        /// <summary>
+        /// 重置初始化状态，用于网络重连后重新注册监听器。
+        /// </summary>
+        public static void Reset()
+        {
+            lock (_initLock)
+            {
+                if (_eventListener != null)
+                {
+                    PhotonNetwork.RemoveCallbackTarget(_eventListener);
+                    _eventListener = null;
+                }
+                _networkedEvent = null;
+                _raiseEventDelegate = null;
+                _useREPOLib = false;
+                _isInitialized = false;
+                Core.CommonPlugin.Logger.LogInfo("SyncRpcModule 已重置，下次发送时将重新初始化。");
+            }
+        }
+
         private static void EnsureInitialized()
         {
             if (_isInitialized) return;
@@ -46,8 +62,7 @@ namespace Dinwlooc.Common.Sync
             {
                 if (_isInitialized) return;
 
-                // 只有 Photon 已连接才尝试注册
-                if (PhotonNetwork.IsConnected && PhotonNetwork.InRoom)
+                if (PhotonNetwork.IsConnected)
                 {
                     if (TryInitializeWithREPOLib())
                     {
@@ -61,9 +76,9 @@ namespace Dinwlooc.Common.Sync
                 }
                 else
                 {
-                    // 未连接或未加入房间时标记为已初始化，但实际不注册监听器
+                    // 未连接时标记为已初始化，但实际不注册任何监听器，后续发送时若连接会再尝试
                     _isInitialized = true;
-                    Core.CommonPlugin.Logger.LogInfo("SyncRpcModule 在 Photon 未就绪时初始化（无监听器注册）。");
+                    Core.CommonPlugin.Logger.LogInfo("SyncRpcModule 在 Photon 未连接时初始化（无监听器注册，将在发送时重试）。");
                 }
             }
         }
@@ -170,15 +185,22 @@ namespace Dinwlooc.Common.Sync
 
         private static void SendEvent(SubOpCode op, string cacheName, object? key, object? value, RaiseEventOptions options)
         {
-            // 未连接或未加入房间时直接返回
-            if (!PhotonNetwork.IsConnected || !PhotonNetwork.InRoom) return;
+            if (!PhotonNetwork.IsConnected || !PhotonNetwork.InRoom)
+                return;
+
+            // 如果已初始化但未注册（可能因网络重连导致监听器丢失），重新尝试初始化
+            if (_isInitialized && _eventListener == null && !_useREPOLib)
+            {
+                Reset();
+            }
 
             EnsureInitialized();
 
-            // 如果已初始化但未注册监听器（可能因为之前未连接），现在尝试注册
-            if (!_useREPOLib && _eventListener == null)
+            // 如果仍未注册，可能因网络问题，直接返回
+            if (_eventListener == null && !_useREPOLib)
             {
-                InitializeFallback();
+                Core.CommonPlugin.Logger.LogWarning("SyncRpcModule 未注册监听器，无法发送事件。");
+                return;
             }
 
             Hashtable data = new Hashtable
@@ -190,9 +212,13 @@ namespace Dinwlooc.Common.Sync
             if (value != null) data["v"] = value;
 
             if (_useREPOLib && _raiseEventDelegate != null)
+            {
                 _raiseEventDelegate(data, options, SendOptions.SendReliable);
+            }
             else
+            {
                 PhotonNetwork.RaiseEvent(FALLBACK_EVENT_CODE, data, options, SendOptions.SendReliable);
+            }
         }
 
         // ---- 公开 API ----
