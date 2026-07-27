@@ -18,7 +18,6 @@ namespace Dinwlooc.Common.Core
         {
             Logger = base.Logger;
 
-            // 注册所有桥接器
             BridgeLocator.Register<IGameStateBridge>(CoreBridge.Instance);
             BridgeLocator.Register<ISaveLoadBridge>(CoreBridge.Instance);
             BridgeLocator.Register<INetworkBridge>(CoreBridge.Instance);
@@ -32,14 +31,15 @@ namespace Dinwlooc.Common.Core
             BridgeLocator.Register<ITruckBridge>(TruckBridge.Instance);
             BridgeLocator.Register<IUpgradeBridge>(UpgradeBridge.Instance);
             BridgeLocator.Register<IEnemyBridge>(EnemyBridge.Instance);
-
-            // 注册 MenuBridge（内部自动处理 MenuLib 检测）
+            BridgeLocator.Register<ISlideBridge>(SlideBridge.Instance);
             BridgeLocator.Register<IMenuBridge>(MenuBridge.Instance);
 
             // 挂载公共服务
-            var go = new GameObject(nameof(CommonService));
+            GameObject go = new GameObject(nameof(CommonService));
             DontDestroyOnLoad(go);
             go.AddComponent<CommonService>();
+
+            // 不再创建 SyncNetworkManager
 
             Logger.LogInfo($"{PluginInfo.PLUGIN_NAME} v{PluginInfo.PLUGIN_VERSION} loaded.");
         }

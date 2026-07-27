@@ -47,9 +47,6 @@ namespace Dinwlooc.Common.Caching
             return newCache;
         }
 
-        /// <summary>
-        /// 获取或创建同步缓存，并自动注册到缓存中心以便通过 GetCache 获取。
-        /// </summary>
         public static ISyncCache<TKey, TValue> GetOrCreateSyncCache<TKey, TValue>(
             string cacheName,
             SyncMode mode,
@@ -57,11 +54,9 @@ namespace Dinwlooc.Common.Caching
             Func<BinaryReader, TValue>? deserialize = null,
             Func<TValue, TValue, TValue>? mergeFunc = null) where TKey : notnull
         {
-            // 从同步区域管理器获取或创建缓存
             ISyncCache<TKey, TValue> cache = SyncRegionManager.Instance.GetOrCreateSyncCache<TKey, TValue>(
                 cacheName, mode, mergeFunc, serialize, deserialize);
 
-            // 注册到 CacheManager 自己的字典中，以便通过 GetCache 访问
             if (!_caches.ContainsKey(cacheName))
             {
                 _caches.TryAdd(cacheName, cache);

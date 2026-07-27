@@ -1,22 +1,13 @@
 ﻿using System.IO;
-using System.Collections;
+using Dinwlooc.Common.Bridge;
 using Dinwlooc.Common.Caching;
-using Dinwlooc.Common.Core;
+using Dinwlooc.Common.IBridge;
 using Dinwlooc.Common.Sync;
-using Dinwlooc.Common.Events;
-using ExitGames.Client.Photon;
 using Photon.Pun;
-using Photon.Realtime;
-using UnityEngine;
 
 namespace SuperEnergy
 {
-    /// <summary>
-    /// 体力配置同步管理器，利用 ISyncCache 实现配置同步。
-    /// 房主通过 Set 广播配置，新玩家由 SyncRegionManager 自动推送全量数据。
-    /// 客户端手动开启 UseHostConfig 时发送请求，房主响应推送。
-    /// </summary>
-    public class StaminaConfigManager : IOnEventCallback
+    public class StaminaConfigManager
     {
         private static StaminaConfigManager? _instance;
         public static StaminaConfigManager Instance => _instance ??= new StaminaConfigManager();
@@ -26,8 +17,6 @@ namespace SuperEnergy
 
         private const string REMOTE_CONFIG_CACHE_NAME = "SuperEnergyRemoteConfig";
         private const string CONFIG_KEY = "current";
-        private const byte EVENT_CODE_CONFIG_REQUEST = 201;
-        private const float PUSH_DELAY = 0.5f;
 
         private StaminaConfigManager() { }
 
@@ -36,23 +25,10 @@ namespace SuperEnergy
             if (_isInitialized) return;
             _isInitialized = true;
 
-            PhotonNetwork.AddCallbackTarget(this);
-            EventBus.Subscribe<MasterClientSwitchedEvent>(OnMasterClientSwitched);
-            EventBus.Subscribe<PlayerLevelEnteredEvent>(OnPlayerLevelEntered);
-
-            // 初始状态
+            // 如果 UseHostConfig 启用，创建同步缓存（同步器会自动处理广播和接收）
             if (SuperEnergyConfig.Instance.UseHostConfig.Value)
             {
                 EnsureSyncCacheCreated();
-                if (SemiFunc.IsMasterClientOrSingleplayer())
-                {
-                    PushCurrentConfig();
-                }
-                else
-                {
-                    // 客户端可能错过了全量推送，主动请求
-                    RequestConfigFromHost();
-                }
             }
 
             SuperEnergy.Logger.LogInfo("体力配置管理器已初始化。");
@@ -64,11 +40,9 @@ namespace SuperEnergy
             _isInitialized = false;
 
             if (_syncConfigCache != null)
+            {
                 _syncConfigCache.OnDataChanged -= OnConfigChanged;
-
-            PhotonNetwork.RemoveCallbackTarget(this);
-            EventBus.Unsubscribe<MasterClientSwitchedEvent>(OnMasterClientSwitched);
-            EventBus.Unsubscribe<PlayerLevelEnteredEvent>(OnPlayerLevelEntered);
+            }
 
             SuperEnergy.Logger.LogInfo("体力配置管理器已关闭。");
         }
@@ -77,6 +51,7 @@ namespace SuperEnergy
         {
             string key = e.ChangedSetting.Definition.Key;
 
+            // 当 UseHostConfig 变化时，重新创建或销毁缓存
             if (key == "UseHostConfig")
             {
                 bool newValue = (bool)e.ChangedSetting.BoxedValue;
@@ -84,72 +59,42 @@ namespace SuperEnergy
 
                 if (newValue)
                 {
+                    // 启用时创建缓存
                     EnsureSyncCacheCreated();
-                    if (SemiFunc.IsMasterClientOrSingleplayer())
-                    {
-                        PushCurrentConfig();
-                    }
-                    else
-                    {
-                        RequestConfigFromHost();
-                    }
                 }
-                // 关闭时只切换本地读取源，不清除缓存（依赖库在房间离开时会清空）
+                else
+                {
+                    // 关闭时释放缓存引用（但不需要立即清空，同步器会在房间切换时清理）
+                    _syncConfigCache = null;
+                }
                 return;
             }
 
-            // 其他配置变更：房主且 UseHostConfig 开启时重新推送
-            if (SuperEnergyConfig.Instance.UseHostConfig.Value && SemiFunc.IsMasterClientOrSingleplayer())
+            // 其他配置变化：如果是房主且 UseHostConfig 启用，缓存会自动同步（因为同步器已订阅事件）
+            // 不需要手动推送，同步器会在缓存 Set 时自动广播
+        }
+
+        private void EnsureSyncCacheCreated()
+        {
+            if (_syncConfigCache != null) return;
+
+            _syncConfigCache = CacheManager.GetOrCreateSyncCache<string, RemoteStaminaConfig>(
+                REMOTE_CONFIG_CACHE_NAME,
+                SyncMode.HostAuthority,
+                serialize: (BinaryWriter writer, RemoteStaminaConfig config) => config.Write(writer),
+                deserialize: (BinaryReader reader) => RemoteStaminaConfig.Read(reader)
+            );
+            _syncConfigCache.OnDataChanged += OnConfigChanged;
+
+            // 如果自己是房主，推送当前配置到缓存（这会触发同步器广播）
+            if (PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom)
             {
-                PushCurrentConfig();
+                PushCurrentConfigToCache();
             }
         }
 
-        private void RequestConfigFromHost()
+        private void PushCurrentConfigToCache()
         {
-            if (!PhotonNetwork.IsConnected || PhotonNetwork.IsMasterClient) return;
-            SuperEnergy.Logger.LogInfo("客户端请求房主配置...");
-            RaiseEventOptions options = new RaiseEventOptions { Receivers = ReceiverGroup.MasterClient };
-            PhotonNetwork.RaiseEvent(EVENT_CODE_CONFIG_REQUEST, null, options, SendOptions.SendReliable);
-        }
-
-        public void OnEvent(EventData photonEvent)
-        {
-            if (photonEvent.Code == EVENT_CODE_CONFIG_REQUEST)
-            {
-                if (PhotonNetwork.IsMasterClient && SemiFunc.RunIsLevel())
-                {
-                    SuperEnergy.Logger.LogInfo("收到客户端配置请求，推送配置...");
-                    PushCurrentConfig();
-                }
-            }
-        }
-
-        private void OnMasterClientSwitched(MasterClientSwitchedEvent evt)
-        {
-            if (!SemiFunc.IsMasterClientOrSingleplayer()) return;
-            if (!SuperEnergyConfig.Instance.UseHostConfig.Value) return;
-            if (!SuperEnergyConfig.Instance.EnableStaminaBoost.Value) return;
-
-            SuperEnergy.Logger.LogInfo("成为新主机，重新推送配置...");
-            CommonService.Instance.RunCoroutine(DelayedPush());
-        }
-
-        private void OnPlayerLevelEntered(PlayerLevelEnteredEvent evt)
-        {
-            // 此事件由 SyncRegionManager 处理全量推送，我们无需重复推送
-            // 但若有特殊需求，可在这里触发推送，但为了避免重复，暂时忽略
-        }
-
-        private IEnumerator DelayedPush()
-        {
-            yield return new WaitForSeconds(PUSH_DELAY);
-            PushCurrentConfig();
-        }
-
-        private void PushCurrentConfig()
-        {
-            if (_syncConfigCache == null) EnsureSyncCacheCreated();
             if (_syncConfigCache == null) return;
 
             SuperEnergyConfig config = SuperEnergyConfig.Instance;
@@ -158,28 +103,17 @@ namespace SuperEnergy
             RemoteStaminaConfig remoteConfig = new RemoteStaminaConfig(
                 config.StaminaPercent.Value,
                 config.EnableCompensationWhenDisabled.Value,
-                config.EnableCrouchBoost.Value
+                config.EnableCrouchBoost.Value,
+                config.SlideBoostPercent.Value
             );
 
-            SuperEnergy.Logger.LogInfo($"房主推送配置：百分比={remoteConfig.Percent}, 补偿={remoteConfig.CompensateWhenDisabled}, 下蹲加成={remoteConfig.EnableCrouchBoost}");
+            SuperEnergy.Logger.LogInfo($"房主推送配置到缓存：体力百分比={remoteConfig.Percent}, 补偿={remoteConfig.CompensateWhenDisabled}, 下蹲加成={remoteConfig.EnableCrouchBoost}, 滑铲倍率={remoteConfig.SlideBoostPercent}");
             _syncConfigCache.Set(CONFIG_KEY, remoteConfig);
-        }
-
-        private void EnsureSyncCacheCreated()
-        {
-            if (_syncConfigCache != null) return;
-            _syncConfigCache = CacheManager.GetOrCreateSyncCache<string, RemoteStaminaConfig>(
-                REMOTE_CONFIG_CACHE_NAME,
-                SyncMode.HostAuthority,
-                serialize: (BinaryWriter writer, RemoteStaminaConfig config) => config.Write(writer),
-                deserialize: (BinaryReader reader) => RemoteStaminaConfig.Read(reader)
-            );
-            _syncConfigCache.OnDataChanged += OnConfigChanged;
         }
 
         private void OnConfigChanged(string key, RemoteStaminaConfig config)
         {
-            SuperEnergy.Logger.LogInfo($"客户端收到房主配置：百分比={config.Percent}, 补偿={config.CompensateWhenDisabled}, 下蹲加成={config.EnableCrouchBoost}");
+            SuperEnergy.Logger.LogInfo($"收到房主配置更新：体力百分比={config.Percent}, 补偿={config.CompensateWhenDisabled}, 下蹲加成={config.EnableCrouchBoost}, 滑铲倍率={config.SlideBoostPercent}");
         }
 
         public static bool TryGetEffectiveConfig(out RemoteStaminaConfig? config)
@@ -192,11 +126,13 @@ namespace SuperEnergy
                 config = new RemoteStaminaConfig(
                     SuperEnergyConfig.Instance.StaminaPercent.Value,
                     SuperEnergyConfig.Instance.EnableCompensationWhenDisabled.Value,
-                    SuperEnergyConfig.Instance.EnableCrouchBoost.Value
+                    SuperEnergyConfig.Instance.EnableCrouchBoost.Value,
+                    SuperEnergyConfig.Instance.SlideBoostPercent.Value
                 );
                 return true;
             }
 
+            // 尝试从同步缓存读取
             ICacheProvider<string, RemoteStaminaConfig>? configCache =
                 CacheManager.GetCache<string, RemoteStaminaConfig>(REMOTE_CONFIG_CACHE_NAME);
             if (configCache != null && configCache.TryGet(CONFIG_KEY, out RemoteStaminaConfig? remote))
@@ -206,12 +142,14 @@ namespace SuperEnergy
             }
 
             // 若未收到且自己是房主/单机，回退本地
-            if (SemiFunc.IsMasterClientOrSingleplayer())
+            IGameStateBridge gameState = BridgeLocator.GameState;
+            if (gameState.IsMasterClientOrSingleplayer())
             {
                 config = new RemoteStaminaConfig(
                     SuperEnergyConfig.Instance.StaminaPercent.Value,
                     SuperEnergyConfig.Instance.EnableCompensationWhenDisabled.Value,
-                    SuperEnergyConfig.Instance.EnableCrouchBoost.Value
+                    SuperEnergyConfig.Instance.EnableCrouchBoost.Value,
+                    SuperEnergyConfig.Instance.SlideBoostPercent.Value
                 );
                 return true;
             }

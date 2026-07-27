@@ -8,6 +8,7 @@ namespace Dinwlooc.Common.Sync
     {
         private static bool TryGetCache(string cacheName, out ISyncCache cache)
         {
+            // 通过 SyncRegionManager 的 SyncCaches 属性访问
             if (SyncRegionManager.Instance.SyncCaches.TryGetValue(cacheName, out ISyncCache? c))
             {
                 cache = c;

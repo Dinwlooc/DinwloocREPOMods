@@ -52,5 +52,7 @@ namespace Dinwlooc.Common.Bridge
             ?? throw new InvalidOperationException("IEnergyBridge not registered.");
         public static IMenuBridge Menu => Get<IMenuBridge>()
             ?? throw new InvalidOperationException("IMenuBridge not registered.");
+        public static ISlideBridge Slide => Get<ISlideBridge>()
+    ?? throw new InvalidOperationException("ISlideBridge not registered.");
     }
 }

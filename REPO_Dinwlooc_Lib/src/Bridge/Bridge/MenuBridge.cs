@@ -2,6 +2,7 @@
 using System.Reflection;
 using BepInEx.Configuration;
 using Dinwlooc.Common.IBridge;
+using MenuLib;
 using UnityEngine;
 
 namespace Dinwlooc.Common.Bridge
@@ -54,10 +55,9 @@ namespace Dinwlooc.Common.Bridge
             float x = posXConfig?.Value ?? 200f;
             float y = posYConfig?.Value ?? 100f;
 
-            // 使用反射调用 AddElementToEscapeMenu，传入一个委托
-            _addElementToEscapeMenuMethod!.Invoke(null, new object[] { (Action<object>)(parent =>
+            // 创建正确的 BuilderDelegate 委托
+            MenuAPI.BuilderDelegate builderDelegate = new MenuAPI.BuilderDelegate(parent =>
             {
-                // 创建按钮：参数顺序 (string text, Action onClick, Transform parent, Vector2 size)
                 object button = _createREPOButtonMethod!.Invoke(null, new object[] { text, onClick, parent, new Vector2(x, y) });
                 // 激活按钮
                 PropertyInfo? gameObjectProp = button.GetType().GetProperty("gameObject");
@@ -66,7 +66,9 @@ namespace Dinwlooc.Common.Bridge
                     GameObject go = gameObjectProp.GetValue(button) as GameObject;
                     if (go != null) go.SetActive(true);
                 }
-            }) });
+            });
+
+            _addElementToEscapeMenuMethod!.Invoke(null, new object[] { builderDelegate });
         }
     }
 }

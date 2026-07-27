@@ -7,12 +7,14 @@ namespace SuperEnergy
         public int Percent { get; }
         public bool CompensateWhenDisabled { get; }
         public bool EnableCrouchBoost { get; }
+        public int SlideBoostPercent { get; } // 新增
 
-        public RemoteStaminaConfig(int percent, bool comp, bool crouch)
+        public RemoteStaminaConfig(int percent, bool comp, bool crouch, int slideBoostPercent = 0)
         {
             Percent = percent;
             CompensateWhenDisabled = comp;
             EnableCrouchBoost = crouch;
+            SlideBoostPercent = slideBoostPercent;
         }
 
         public void Write(BinaryWriter writer)
@@ -20,6 +22,7 @@ namespace SuperEnergy
             writer.Write(Percent);
             writer.Write(CompensateWhenDisabled);
             writer.Write(EnableCrouchBoost);
+            writer.Write(SlideBoostPercent);
         }
 
         public static RemoteStaminaConfig Read(BinaryReader reader)
@@ -27,7 +30,8 @@ namespace SuperEnergy
             int percent = reader.ReadInt32();
             bool comp = reader.ReadBoolean();
             bool crouch = reader.ReadBoolean();
-            return new RemoteStaminaConfig(percent, comp, crouch);
+            int slideBoost = reader.ReadInt32();
+            return new RemoteStaminaConfig(percent, comp, crouch, slideBoost);
         }
     }
 }

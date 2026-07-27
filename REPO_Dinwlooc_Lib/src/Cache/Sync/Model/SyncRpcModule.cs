@@ -9,31 +9,20 @@ using Photon.Realtime;
 namespace Dinwlooc.Common.Sync
 {
     /// <summary>
-    /// 同步 RPC 通信模块，优先使用 REPOLib 的 NetworkedEvent 通道，
-    /// 若不可用则回退到自研的 RaiseEvent 实现（固定事件码 200）。
+    /// 同步 RPC 通信模块，纯惰性初始化。
+    /// 仅在首次发送事件时尝试注册监听器，且仅当 Photon 已连接并加入房间时才实际发送。
     /// </summary>
     public static class SyncRpcModule
     {
-        // 自研方案的事件码（仅在 REPOLib 不可用时使用）
         private const byte FALLBACK_EVENT_CODE = 200;
 
-        // 是否已初始化
         private static bool _isInitialized = false;
         private static readonly object _initLock = new object();
-
-        // 是否使用 REPOLib 通道
         private static bool _useREPOLib = false;
-
-        // 当使用 REPOLib 时的 NetworkedEvent 实例
         private static object? _networkedEvent = null;
-
-        // 当使用 REPOLib 时，缓存其 RaiseEvent 方法委托（提升性能）
         private static Action<object, RaiseEventOptions, SendOptions>? _raiseEventDelegate = null;
-
-        // 当使用自研方案时的 EventListener 实例
         private static IOnEventCallback? _eventListener = null;
 
-        // 子操作码
         private enum SubOpCode : byte
         {
             ApplyData,
@@ -50,7 +39,6 @@ namespace Dinwlooc.Common.Sync
             ReceiveFullSnapshotBinary
         }
 
-        // ---- 初始化 ----
         private static void EnsureInitialized()
         {
             if (_isInitialized) return;
@@ -58,44 +46,42 @@ namespace Dinwlooc.Common.Sync
             {
                 if (_isInitialized) return;
 
-                // 尝试初始化 REPOLib 通道
-                if (!TryInitializeWithREPOLib())
+                // 只有 Photon 已连接才尝试注册
+                if (PhotonNetwork.IsConnected && PhotonNetwork.InRoom)
                 {
-                    // 回退到自研方案
+                    if (TryInitializeWithREPOLib())
+                    {
+                        _isInitialized = true;
+                        Core.CommonPlugin.Logger.LogInfo("SyncRpcModule 已初始化（REPOLib NetworkedEvent 通道）。");
+                        return;
+                    }
                     InitializeFallback();
+                    _isInitialized = true;
+                    Core.CommonPlugin.Logger.LogInfo($"SyncRpcModule 已初始化（自研 Fallback，事件码 {FALLBACK_EVENT_CODE}）。");
                 }
-
-                _isInitialized = true;
-                Core.CommonPlugin.Logger.LogInfo($"SyncRpcModule 已初始化，使用 {(_useREPOLib ? "REPOLib NetworkedEvent" : "自研 Fallback")} 通道");
+                else
+                {
+                    // 未连接或未加入房间时标记为已初始化，但实际不注册监听器
+                    _isInitialized = true;
+                    Core.CommonPlugin.Logger.LogInfo("SyncRpcModule 在 Photon 未就绪时初始化（无监听器注册）。");
+                }
             }
         }
 
-        // ---- 尝试使用 REPOLib NetworkedEvent ----
         private static bool TryInitializeWithREPOLib()
         {
             try
             {
                 Type? networkEventType = Type.GetType("REPOLib.Modules.NetworkEvent, REPOLib");
-                if (networkEventType == null)
-                {
-                    Core.CommonPlugin.Logger.LogInfo("REPOLib.NetworkEvent 未找到，回退到自研方案");
-                    return false;
-                }
+                if (networkEventType == null) return false;
 
-                // 创建 NetworkedEvent 实例，传入事件名称和回调委托
                 Action<EventData> onEvent = OnNetworkedEventReceived;
                 _networkedEvent = Activator.CreateInstance(networkEventType, "Dinwlooc_Sync", onEvent);
-                if (_networkedEvent == null)
-                {
-                    Core.CommonPlugin.Logger.LogWarning("创建 NetworkedEvent 失败，回退到自研方案");
-                    return false;
-                }
+                if (_networkedEvent == null) return false;
 
-                // 缓存 RaiseEvent 方法委托（因为 NetworkedEvent.RaiseEvent 是公开方法）
                 MethodInfo? raiseMethod = networkEventType.GetMethod("RaiseEvent", new Type[] { typeof(object), typeof(RaiseEventOptions), typeof(SendOptions) });
                 if (raiseMethod == null)
                 {
-                    Core.CommonPlugin.Logger.LogWarning("NetworkedEvent.RaiseEvent 方法未找到，回退到自研方案");
                     _networkedEvent = null;
                     return false;
                 }
@@ -103,7 +89,6 @@ namespace Dinwlooc.Common.Sync
                 _raiseEventDelegate = (Action<object, RaiseEventOptions, SendOptions>)Delegate.CreateDelegate(
                     typeof(Action<object, RaiseEventOptions, SendOptions>), _networkedEvent, raiseMethod);
                 _useREPOLib = true;
-                Core.CommonPlugin.Logger.LogInfo("SyncRpcModule 已成功接入 REPOLib NetworkedEvent 通道");
                 return true;
             }
             catch (Exception ex)
@@ -115,10 +100,16 @@ namespace Dinwlooc.Common.Sync
             }
         }
 
-        // ---- REPOLib 事件接收回调 ----
+        private static void InitializeFallback()
+        {
+            if (_eventListener != null) return;
+            _eventListener = new EventListener(FALLBACK_EVENT_CODE);
+            PhotonNetwork.AddCallbackTarget(_eventListener);
+            _useREPOLib = false;
+        }
+
         private static void OnNetworkedEventReceived(EventData photonEvent)
         {
-            // 与自研方案的事件处理逻辑完全相同
             if (photonEvent.CustomData is not Hashtable data) return;
             if (!data.ContainsKey("op")) return;
 
@@ -166,23 +157,10 @@ namespace Dinwlooc.Common.Sync
             }
         }
 
-        // ---- 自研 Fallback 实现 ----
-        private static void InitializeFallback()
-        {
-            _eventListener = new EventListener(FALLBACK_EVENT_CODE);
-            PhotonNetwork.AddCallbackTarget(_eventListener);
-            _useREPOLib = false;
-        }
-
         private class EventListener : IOnEventCallback
         {
             private readonly byte _eventCode;
-
-            public EventListener(byte eventCode)
-            {
-                _eventCode = eventCode;
-            }
-
+            public EventListener(byte eventCode) => _eventCode = eventCode;
             public void OnEvent(EventData photonEvent)
             {
                 if (photonEvent.Code != _eventCode) return;
@@ -190,11 +168,18 @@ namespace Dinwlooc.Common.Sync
             }
         }
 
-        // ---- 发送方法封装 ----
         private static void SendEvent(SubOpCode op, string cacheName, object? key, object? value, RaiseEventOptions options)
         {
+            // 未连接或未加入房间时直接返回
+            if (!PhotonNetwork.IsConnected || !PhotonNetwork.InRoom) return;
+
             EnsureInitialized();
-            if (!PhotonNetwork.IsConnected) return;
+
+            // 如果已初始化但未注册监听器（可能因为之前未连接），现在尝试注册
+            if (!_useREPOLib && _eventListener == null)
+            {
+                InitializeFallback();
+            }
 
             Hashtable data = new Hashtable
             {
@@ -205,18 +190,12 @@ namespace Dinwlooc.Common.Sync
             if (value != null) data["v"] = value;
 
             if (_useREPOLib && _raiseEventDelegate != null)
-            {
-                // 使用 REPOLib 的 NetworkedEvent 发送
                 _raiseEventDelegate(data, options, SendOptions.SendReliable);
-            }
             else
-            {
-                // 使用自研方案发送
                 PhotonNetwork.RaiseEvent(FALLBACK_EVENT_CODE, data, options, SendOptions.SendReliable);
-            }
         }
 
-        // ---- 公开 API（完全不变） ----
+        // ---- 公开 API ----
         public static void BroadcastData<TKey, TValue>(string cacheName, TKey key, TValue value)
         {
             if (!PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom) return;
@@ -249,8 +228,7 @@ namespace Dinwlooc.Common.Sync
         {
             if (!PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom) return;
             Hashtable hashtable = new Hashtable();
-            foreach (var kv in snapshot)
-                hashtable[kv.Key] = kv.Value;
+            foreach (var kv in snapshot) hashtable[kv.Key] = kv.Value;
             RaiseEventOptions options = new RaiseEventOptions { Receivers = ReceiverGroup.Others };
             SendEvent(SubOpCode.ApplyFullSnapshot, cacheName, null, hashtable, options);
         }

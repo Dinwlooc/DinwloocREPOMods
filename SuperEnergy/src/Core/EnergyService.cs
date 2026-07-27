@@ -21,19 +21,28 @@ namespace SuperEnergy
             _handlers.Add(new PlayerHealHandler());
             _handlers.Add(new DeathHeadReviveHandler());
             _handlers.Add(new StaminaBoostHandler());
+            _handlers.Add(new SlideBoostHandler()); // 新增
         }
 
         private void Update()
         {
-            if (SemiFunc.IsMainMenu() || SemiFunc.RunIsLobbyMenu()) return;
-            if (!SemiFunc.RunIsLevel()) return;
+            if (_gameState.IsMainMenu() || SemiFunc.RunIsLobbyMenu())
+            {
+                return;
+            }
+            if (!_gameState.IsLevelLoaded())
+            {
+                return;
+            }
 
             if (Time.time >= _nextTickTime)
             {
                 _nextTickTime = Time.time + TickInterval;
                 bool isHost = _gameState.IsMasterClientOrSingleplayer();
-                foreach (var handler in _handlers)
+                foreach (IEnergyHandler handler in _handlers)
+                {
                     handler.Process(isHost, TickInterval);
+                }
             }
         }
     }

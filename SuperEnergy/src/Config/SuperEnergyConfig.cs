@@ -28,6 +28,10 @@ namespace SuperEnergy
         public ConfigEntry<bool> EnableCrouchBoost { get; private set; } = null!;
         public ConfigEntry<bool> UseHostConfig { get; private set; } = null!;
 
+        // ---- 滑铲加速（新增） ----
+        public ConfigEntry<bool> EnableSlideBoost { get; private set; } = null!;
+        public ConfigEntry<int> SlideBoostPercent { get; private set; } = null!;
+
         public override void Bind(ConfigFile config)
         {
             base.Bind(config);
@@ -61,6 +65,11 @@ namespace SuperEnergy
                 "是否对下蹲恢复应用百分比加成");
             UseHostConfig = config.Bind("StaminaBoost", "UseHostConfig", false,
                 "是否使用房主的体力配置（开启后忽略本地配置，等待房主广播）");
+
+            // 滑铲加速配置
+            EnableSlideBoost = config.Bind("SlideBoost", "Enable", true, "启用滑铲效能提升");
+            SlideBoostPercent = config.Bind("SlideBoost", "Percent", 0,
+                new ConfigDescription("滑铲持续时间额外增加百分比（0~500）", new AcceptableValueRange<int>(0, 500)));
         }
     }
 

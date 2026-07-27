@@ -18,11 +18,55 @@ namespace Dinwlooc.Common.Bridge
         public static CoreBridge Instance => _instance ??= new CoreBridge();
         private CoreBridge() { }
 
-        // ---------- IGameStateBridge ----------
-        public bool IsMasterClientOrSingleplayer() => SemiFunc.IsMasterClientOrSingleplayer();
-        public bool IsMainMenu() => SemiFunc.IsMainMenu();
-        public bool IsInTransit() => !SemiFunc.RunIsLevel() && !SemiFunc.RunIsShop() && !IsMainMenu();
-        public bool IsLevelLoaded() => LevelGenerator.Instance != null && LevelGenerator.Instance.Generated;
+        // ---------- IGameStateBridge（带异常保护） ----------
+        public bool IsMasterClientOrSingleplayer()
+        {
+            try
+            {
+                return SemiFunc.IsMasterClientOrSingleplayer();
+            }
+            catch (Exception ex)
+            {
+                Core.CommonPlugin.Logger.LogWarning($"IsMasterClientOrSingleplayer failed (early init?), defaulting to true: {ex.Message}");
+                return true; // 安全默认值，允许本地操作
+            }
+        }
+
+        public bool IsMainMenu()
+        {
+            try
+            {
+                return SemiFunc.IsMainMenu();
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public bool IsInTransit()
+        {
+            try
+            {
+                return !SemiFunc.RunIsLevel() && !SemiFunc.RunIsShop() && !IsMainMenu();
+            }
+            catch
+            {
+                return true; // 不确定时认为处于过渡状态
+            }
+        }
+
+        public bool IsLevelLoaded()
+        {
+            try
+            {
+                return LevelGenerator.Instance != null && LevelGenerator.Instance.Generated;
+            }
+            catch
+            {
+                return false;
+            }
+        }
 
         // ---------- ISaveLoadBridge ----------
         public string? GetCurrentSaveFileName()

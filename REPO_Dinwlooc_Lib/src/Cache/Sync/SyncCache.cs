@@ -2,14 +2,12 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
-using Photon.Pun;
+using System.Text;
 
 namespace Dinwlooc.Common.Sync
 {
     internal class SyncCache<TKey, TValue> : ISyncCache<TKey, TValue> where TKey : notnull
     {
-        private const int DEFAULT_EXPIRATION_SECONDS = 0;
-
         private readonly ConcurrentDictionary<TKey, TValue> _cache = new ConcurrentDictionary<TKey, TValue>();
         private readonly SyncMode _mode;
         private readonly string _cacheName;
@@ -19,6 +17,9 @@ namespace Dinwlooc.Common.Sync
         private readonly ISerializationStrategy<TValue> _serializationStrategy;
 
         public event Action<TKey, TValue>? OnDataChanged;
+        public event Action<TKey>? OnDataRemoved;
+        public event Action? OnDataCleared;
+
         public SyncMode Mode => _mode;
         public bool UseBinarySerialization => _serializationStrategy is BinaryStrategy<TValue>;
 
@@ -45,7 +46,6 @@ namespace Dinwlooc.Common.Sync
             }
         }
 
-        // ---------- 泛型核心方法 ----------
         public bool TryGet(TKey key, out TValue value)
         {
             return _cache.TryGetValue(key, out value);
@@ -53,15 +53,13 @@ namespace Dinwlooc.Common.Sync
 
         public void Set(TKey key, TValue value, TimeSpan? expiration = null)
         {
-            if (_cache.TryGetValue(key, out TValue existingValue))
+            if (_cache.TryGetValue(key, out TValue existingValue) &&
+                EqualityComparer<TValue>.Default.Equals(existingValue, value))
             {
-                if (EqualityComparer<TValue>.Default.Equals(existingValue, value))
-                {
-                    return;
-                }
+                return;
             }
 
-            bool isHost = PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom;
+            bool isHost = Photon.Pun.PhotonNetwork.IsMasterClient || !Photon.Pun.PhotonNetwork.InRoom;
             bool canWrite = isHost || (_mode == SyncMode.ClientSnapshot) || (_mode == SyncMode.Merge);
             if (!canWrite)
             {
@@ -70,54 +68,14 @@ namespace Dinwlooc.Common.Sync
 
             _cache[key] = value;
             OnDataChanged?.Invoke(key, value);
-
-            if (isHost && ((_mode == SyncMode.HostAuthority) || (_mode == SyncMode.Merge)))
-            {
-                if (UseBinarySerialization)
-                {
-                    byte[] data = SerializeToBinary(value);
-                    SyncRpcModule.BroadcastDataBinary<TKey>(_cacheName, key, data);
-                }
-                else
-                {
-                    object data = _serializationStrategy.SerializeToObject(value);
-                    SyncRpcModule.BroadcastData<TKey, object>(_cacheName, key, data);
-                }
-            }
-            else if ((_mode == SyncMode.ClientSnapshot) && !isHost)
-            {
-                if (UseBinarySerialization)
-                {
-                    byte[] data = SerializeToBinary(value);
-                    SyncRpcModule.SendSnapshotBinary<TKey>(_cacheName, key, data);
-                }
-                else
-                {
-                    object data = _serializationStrategy.SerializeToObject(value);
-                    SyncRpcModule.SendSnapshot<TKey, object>(_cacheName, key, data);
-                }
-            }
-            else if ((_mode == SyncMode.Merge) && !isHost)
-            {
-                if (UseBinarySerialization)
-                {
-                    byte[] data = SerializeToBinary(value);
-                    SyncRpcModule.SendMergeRequestBinary<TKey>(_cacheName, key, data);
-                }
-                else
-                {
-                    object data = _serializationStrategy.SerializeToObject(value);
-                    SyncRpcModule.SendMergeRequest<TKey, object>(_cacheName, key, data);
-                }
-            }
         }
 
         public bool Remove(TKey key)
         {
             bool removed = _cache.TryRemove(key, out _);
-            if (removed && PhotonNetwork.IsMasterClient && ((_mode == SyncMode.HostAuthority) || (_mode == SyncMode.Merge)))
+            if (removed)
             {
-                SyncRpcModule.BroadcastRemove<TKey>(_cacheName, key);
+                OnDataRemoved?.Invoke(key);
             }
             return removed;
         }
@@ -125,50 +83,17 @@ namespace Dinwlooc.Common.Sync
         public void Clear()
         {
             _cache.Clear();
-            if (PhotonNetwork.IsMasterClient && ((_mode == SyncMode.HostAuthority) || (_mode == SyncMode.Merge)))
-            {
-                SyncRpcModule.BroadcastClear(_cacheName);
-            }
+            OnDataCleared?.Invoke();
         }
 
         public void Refresh(TKey key) { }
 
-        public void SyncNow()
-        {
-            if (!PhotonNetwork.IsMasterClient && PhotonNetwork.InRoom)
-            {
-                return;
-            }
-
-            ConcurrentDictionary<TKey, TValue> snapshot = new ConcurrentDictionary<TKey, TValue>(_cache);
-            if (UseBinarySerialization)
-            {
-                Dictionary<object, byte[]> data = new Dictionary<object, byte[]>();
-                foreach (KeyValuePair<TKey, TValue> kv in snapshot)
-                {
-                    byte[] serialized = SerializeToBinary(kv.Value);
-                    data[kv.Key!] = serialized;
-                }
-                SyncRpcModule.BroadcastFullSnapshotBinary<TKey>(_cacheName, data);
-            }
-            else
-            {
-                ConcurrentDictionary<TKey, object> data = new ConcurrentDictionary<TKey, object>();
-                foreach (KeyValuePair<TKey, TValue> kv in snapshot)
-                {
-                    data[kv.Key] = _serializationStrategy.SerializeToObject(kv.Value);
-                }
-                SyncRpcModule.BroadcastFullSnapshot<TKey, object>(_cacheName, data);
-            }
-        }
-
-        // ---------- 二进制序列化辅助（使用对象池） ----------
-        private byte[] SerializeToBinary(TValue value)
+        internal byte[] SerializeToBinary(TValue value)
         {
             MemoryStream ms = ByteBufferPool.Rent();
             try
             {
-                using (BinaryWriter writer = new BinaryWriter(ms))
+                using (BinaryWriter writer = new BinaryWriter(ms, Encoding.UTF8, true))
                 {
                     if (_serialize != null)
                     {
@@ -187,14 +112,14 @@ namespace Dinwlooc.Common.Sync
             }
         }
 
-        private TValue DeserializeFromBinary(byte[] data)
+        internal TValue DeserializeFromBinary(byte[] data)
         {
             MemoryStream ms = ByteBufferPool.Rent();
             try
             {
                 ms.Write(data, 0, data.Length);
                 ms.Position = 0;
-                using (BinaryReader reader = new BinaryReader(ms))
+                using (BinaryReader reader = new BinaryReader(ms, Encoding.UTF8, true))
                 {
                     if (_deserialize != null)
                     {
@@ -209,26 +134,27 @@ namespace Dinwlooc.Common.Sync
             }
         }
 
-        // ---------- 合并模式内部处理（强类型，无 DynamicInvoke） ----------
-        private void ProcessMergeInternal(TKey key, TValue incoming)
+        internal object SerializeToObject(TValue value)
         {
-            if (_cache.TryGetValue(key, out TValue current))
-            {
-                if (_mergeFunc != null)
-                {
-                    incoming = _mergeFunc(current, incoming);
-                }
-            }
-            // 直接调用 Set（内部会处理网络广播和存储）
-            Set(key, incoming);
+            return _serializationStrategy.SerializeToObject(value);
         }
 
-        // ---------- ISyncCache 显式实现（供 RPC 处理器调用） ----------
+        internal TValue DeserializeFromObject(object data)
+        {
+            return _serializationStrategy.DeserializeFromObject(data);
+        }
+
+        internal ConcurrentDictionary<TKey, TValue> GetAllData()
+        {
+            return _cache;
+        }
+
         void ISyncCache.ApplyRemoteSetObject(object key, object value)
         {
             if (key is TKey typedKey && value is TValue typedValue)
             {
-                ApplyRemoteSet(typedKey, typedValue);
+                _cache[typedKey] = typedValue;
+                OnDataChanged?.Invoke(typedKey, typedValue);
             }
             else
             {
@@ -236,7 +162,8 @@ namespace Dinwlooc.Common.Sync
                 {
                     TKey convertedKey = (TKey)Convert.ChangeType(key, typeof(TKey));
                     TValue convertedValue = (TValue)Convert.ChangeType(value, typeof(TValue));
-                    ApplyRemoteSet(convertedKey, convertedValue);
+                    _cache[convertedKey] = convertedValue;
+                    OnDataChanged?.Invoke(convertedKey, convertedValue);
                 }
                 catch (Exception ex)
                 {
@@ -250,7 +177,8 @@ namespace Dinwlooc.Common.Sync
             if (key is TKey typedKey)
             {
                 TValue value = DeserializeFromBinary(data);
-                ApplyRemoteSet(typedKey, value);
+                _cache[typedKey] = value;
+                OnDataChanged?.Invoke(typedKey, value);
             }
             else
             {
@@ -258,7 +186,8 @@ namespace Dinwlooc.Common.Sync
                 {
                     TKey convertedKey = (TKey)Convert.ChangeType(key, typeof(TKey));
                     TValue value = DeserializeFromBinary(data);
-                    ApplyRemoteSet(convertedKey, value);
+                    _cache[convertedKey] = value;
+                    OnDataChanged?.Invoke(convertedKey, value);
                 }
                 catch (Exception ex)
                 {
@@ -271,14 +200,16 @@ namespace Dinwlooc.Common.Sync
         {
             if (key is TKey typedKey)
             {
-                ApplyRemoteRemove(typedKey);
+                _cache.TryRemove(typedKey, out _);
+                OnDataRemoved?.Invoke(typedKey);
             }
             else
             {
                 try
                 {
                     TKey convertedKey = (TKey)Convert.ChangeType(key, typeof(TKey));
-                    ApplyRemoteRemove(convertedKey);
+                    _cache.TryRemove(convertedKey, out _);
+                    OnDataRemoved?.Invoke(convertedKey);
                 }
                 catch (Exception ex)
                 {
@@ -289,7 +220,8 @@ namespace Dinwlooc.Common.Sync
 
         void ISyncCache.ApplyRemoteClear()
         {
-            ApplyRemoteClear();
+            _cache.Clear();
+            OnDataCleared?.Invoke();
         }
 
         void ISyncCache.ProcessMergeObject(object key, object value)
@@ -335,41 +267,21 @@ namespace Dinwlooc.Common.Sync
             }
         }
 
-        // ---------- 内部应用方法（供 RPC 直接使用） ----------
-        internal void ApplyRemoteSet(TKey key, TValue value)
+        void ISyncCache.SyncNow()
         {
-            _cache[key] = value;
-            OnDataChanged?.Invoke(key, value);
+            // 由同步器实现全量推送
         }
 
-        internal void ApplyRemoteRemove(TKey key)
+        private void ProcessMergeInternal(TKey key, TValue incoming)
         {
-            _cache.TryRemove(key, out _);
-        }
-
-        internal void ApplyRemoteClear()
-        {
-            _cache.Clear();
-        }
-
-        internal Dictionary<object, object> GetAllDataAsObjects()
-        {
-            Dictionary<object, object> result = new Dictionary<object, object>();
-            foreach (KeyValuePair<TKey, TValue> kv in _cache)
+            if (_cache.TryGetValue(key, out TValue current))
             {
-                result[kv.Key!] = _serializationStrategy.SerializeToObject(kv.Value);
+                if (_mergeFunc != null)
+                {
+                    incoming = _mergeFunc(current, incoming);
+                }
             }
-            return result;
-        }
-
-        internal Dictionary<object, byte[]> GetAllDataAsBinary()
-        {
-            Dictionary<object, byte[]> result = new Dictionary<object, byte[]>();
-            foreach (KeyValuePair<TKey, TValue> kv in _cache)
-            {
-                result[kv.Key!] = SerializeToBinary(kv.Value);
-            }
-            return result;
+            Set(key, incoming);
         }
     }
 }
