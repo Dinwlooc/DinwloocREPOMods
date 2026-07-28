@@ -33,7 +33,7 @@ namespace Dinwlooc.Common.Core
             BridgeLocator.Register<IEnemyBridge>(EnemyBridge.Instance);
             BridgeLocator.Register<ISlideBridge>(SlideBridge.Instance);
             BridgeLocator.Register<IMenuBridge>(MenuBridge.Instance);
-
+            BridgeLocator.Register<IEnemyModifierBridge>(EnemyModifierBridge.Instance);
             // 挂载公共服务
             GameObject go = new GameObject(nameof(CommonService));
             DontDestroyOnLoad(go);

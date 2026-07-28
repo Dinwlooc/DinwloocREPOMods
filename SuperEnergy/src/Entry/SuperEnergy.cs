@@ -20,12 +20,14 @@ namespace SuperEnergy
             Instance = this;
             Logger = base.Logger;
 
+            // 创建/更新翻译文件
+            LocalizationManager.Load();
+
+            // 绑定配置（键名已更新）
             SuperEnergyConfig.Instance.Initialize(Config);
+
             _service = gameObject.AddComponent<EnergyService>();
-
-            // 订阅配置变更
             Config.SettingChanged += OnConfigSettingChanged;
-
             _configManager = StaminaConfigManager.Instance;
             _configManager.Initialize();
 

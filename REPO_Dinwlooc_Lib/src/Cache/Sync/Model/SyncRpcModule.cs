@@ -1,16 +1,19 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Reflection;
 using ExitGames.Client.Photon;
 using Photon.Pun;
 using Photon.Realtime;
+using PhotonHashtable = ExitGames.Client.Photon.Hashtable;
 
 namespace Dinwlooc.Common.Sync
 {
     public static class SyncRpcModule
     {
         private const byte FALLBACK_EVENT_CODE = 200;
+        private const string LOG_TAG = "[SyncRpcModule]";
 
         private static bool _isInitialized = false;
         private static readonly object _initLock = new object();
@@ -51,34 +54,36 @@ namespace Dinwlooc.Common.Sync
                 _raiseEventDelegate = null;
                 _useREPOLib = false;
                 _isInitialized = false;
-                Core.CommonPlugin.Logger.LogInfo("SyncRpcModule 已重置，下次发送时将重新初始化。");
+                Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 已重置，下次发送时将重新初始化。");
             }
         }
 
         private static void EnsureInitialized()
         {
-            if (_isInitialized) return;
+            if (_isInitialized)
+                return;
+
             lock (_initLock)
             {
-                if (_isInitialized) return;
+                if (_isInitialized)
+                    return;
 
-                if (PhotonNetwork.IsConnected)
+                if (PhotonNetwork.IsConnected && PhotonNetwork.InRoom)
                 {
                     if (TryInitializeWithREPOLib())
                     {
                         _isInitialized = true;
-                        Core.CommonPlugin.Logger.LogInfo("SyncRpcModule 已初始化（REPOLib NetworkedEvent 通道）。");
+                        Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 初始化成功（REPOLib 通道）。");
                         return;
                     }
                     InitializeFallback();
                     _isInitialized = true;
-                    Core.CommonPlugin.Logger.LogInfo($"SyncRpcModule 已初始化（自研 Fallback，事件码 {FALLBACK_EVENT_CODE}）。");
+                    Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 初始化成功（原生 Fallback，事件码 {FALLBACK_EVENT_CODE}）。");
                 }
                 else
                 {
-                    // 未连接时标记为已初始化，但实际不注册任何监听器，后续发送时若连接会再尝试
                     _isInitialized = true;
-                    Core.CommonPlugin.Logger.LogInfo("SyncRpcModule 在 Photon 未连接时初始化（无监听器注册，将在发送时重试）。");
+                    Core.CommonPlugin.Logger.LogWarning($"{LOG_TAG} 网络未就绪，延迟初始化。");
                 }
             }
         }
@@ -108,7 +113,7 @@ namespace Dinwlooc.Common.Sync
             }
             catch (Exception ex)
             {
-                Core.CommonPlugin.Logger.LogError($"初始化 REPOLib 通道失败: {ex.Message}");
+                Core.CommonPlugin.Logger.LogError($"{LOG_TAG} 初始化 REPOLib 失败: {ex.Message}");
                 _networkedEvent = null;
                 _raiseEventDelegate = null;
                 return false;
@@ -125,12 +130,13 @@ namespace Dinwlooc.Common.Sync
 
         private static void OnNetworkedEventReceived(EventData photonEvent)
         {
-            if (photonEvent.CustomData is not Hashtable data) return;
+            if (photonEvent.CustomData is not PhotonHashtable data) return;
             if (!data.ContainsKey("op")) return;
 
             byte op = (byte)data["op"];
             string cacheName = (string)data["c"];
 
+            // 直接调用 SyncRpcProcessor 的静态方法（保持原始设计）
             switch (op)
             {
                 case (byte)SubOpCode.ApplyData:
@@ -146,7 +152,7 @@ namespace Dinwlooc.Common.Sync
                     SyncRpcProcessor.ApplyRemoteClear(cacheName);
                     break;
                 case (byte)SubOpCode.ApplyFullSnapshot:
-                    SyncRpcProcessor.ApplyFullSnapshot(cacheName, (Hashtable)data["v"]);
+                    SyncRpcProcessor.ApplyFullSnapshot(cacheName, (PhotonHashtable)data["v"]);
                     break;
                 case (byte)SubOpCode.ApplyFullSnapshotBinary:
                     SyncRpcProcessor.ApplyFullSnapshotBinary(cacheName, (Dictionary<object, byte[]>)data["v"]);
@@ -164,10 +170,13 @@ namespace Dinwlooc.Common.Sync
                     SyncRpcProcessor.ApplyMergeRequestBinary(cacheName, data["k"], (byte[])data["v"]);
                     break;
                 case (byte)SubOpCode.ReceiveFullSnapshot:
-                    SyncRpcProcessor.ApplyFullSnapshot(cacheName, (Hashtable)data["v"]);
+                    SyncRpcProcessor.ApplyFullSnapshot(cacheName, (PhotonHashtable)data["v"]);
                     break;
                 case (byte)SubOpCode.ReceiveFullSnapshotBinary:
                     SyncRpcProcessor.ApplyFullSnapshotBinary(cacheName, (Dictionary<object, byte[]>)data["v"]);
+                    break;
+                default:
+                    Core.CommonPlugin.Logger.LogWarning($"{LOG_TAG} 未知操作码: {op}");
                     break;
             }
         }
@@ -186,9 +195,11 @@ namespace Dinwlooc.Common.Sync
         private static void SendEvent(SubOpCode op, string cacheName, object? key, object? value, RaiseEventOptions options)
         {
             if (!PhotonNetwork.IsConnected || !PhotonNetwork.InRoom)
+            {
+                Core.CommonPlugin.Logger.LogWarning($"{LOG_TAG} 网络未连接或未在房间内，无法发送事件。");
                 return;
+            }
 
-            // 如果已初始化但未注册（可能因网络重连导致监听器丢失），重新尝试初始化
             if (_isInitialized && _eventListener == null && !_useREPOLib)
             {
                 Reset();
@@ -196,14 +207,13 @@ namespace Dinwlooc.Common.Sync
 
             EnsureInitialized();
 
-            // 如果仍未注册，可能因网络问题，直接返回
             if (_eventListener == null && !_useREPOLib)
             {
-                Core.CommonPlugin.Logger.LogWarning("SyncRpcModule 未注册监听器，无法发送事件。");
+                Core.CommonPlugin.Logger.LogError($"{LOG_TAG} 未注册监听器，无法发送事件。");
                 return;
             }
 
-            Hashtable data = new Hashtable
+            PhotonHashtable data = new PhotonHashtable
             {
                 ["op"] = (byte)op,
                 ["c"] = cacheName
@@ -250,13 +260,11 @@ namespace Dinwlooc.Common.Sync
             SendEvent(SubOpCode.ApplyClear, cacheName, null, null, options);
         }
 
-        public static void BroadcastFullSnapshot<TKey, TValue>(string cacheName, ConcurrentDictionary<TKey, TValue> snapshot)
+        public static void BroadcastFullSnapshot(string cacheName, PhotonHashtable snapshot)
         {
             if (!PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom) return;
-            Hashtable hashtable = new Hashtable();
-            foreach (var kv in snapshot) hashtable[kv.Key] = kv.Value;
             RaiseEventOptions options = new RaiseEventOptions { Receivers = ReceiverGroup.Others };
-            SendEvent(SubOpCode.ApplyFullSnapshot, cacheName, null, hashtable, options);
+            SendEvent(SubOpCode.ApplyFullSnapshot, cacheName, null, snapshot, options);
         }
 
         public static void BroadcastFullSnapshotBinary<TKey>(string cacheName, Dictionary<object, byte[]> snapshot)
@@ -294,17 +302,23 @@ namespace Dinwlooc.Common.Sync
             SendEvent(SubOpCode.ReceiveMergeRequestBinary, cacheName, key, data, options);
         }
 
-        public static void SendFullSnapshotToPlayer(string cacheName, Hashtable snapshot, int targetPlayerViewId)
+        public static void SendFullSnapshotToPlayer(string cacheName, PhotonHashtable snapshot, int targetActorNumber)
         {
             if (!PhotonNetwork.IsConnected) return;
-            RaiseEventOptions options = new RaiseEventOptions { Receivers = ReceiverGroup.All };
+            RaiseEventOptions options = new RaiseEventOptions
+            {
+                TargetActors = new int[] { targetActorNumber }
+            };
             SendEvent(SubOpCode.ReceiveFullSnapshot, cacheName, null, snapshot, options);
         }
 
-        public static void SendFullSnapshotBinaryToPlayer(string cacheName, Dictionary<object, byte[]> snapshot, int targetPlayerViewId)
+        public static void SendFullSnapshotBinaryToPlayer(string cacheName, Dictionary<object, byte[]> snapshot, int targetActorNumber)
         {
             if (!PhotonNetwork.IsConnected) return;
-            RaiseEventOptions options = new RaiseEventOptions { Receivers = ReceiverGroup.All };
+            RaiseEventOptions options = new RaiseEventOptions
+            {
+                TargetActors = new int[] { targetActorNumber }
+            };
             SendEvent(SubOpCode.ReceiveFullSnapshotBinary, cacheName, null, snapshot, options);
         }
     }

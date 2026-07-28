@@ -19,9 +19,9 @@ namespace SuperEnergy
         {
             if (!isHost) return;
             var config = SuperEnergyConfig.Instance;
-            if (!config.EnableDeathHeadRevive.Value) return;
+            if (!config.DeathHeadReviveEnabled.Value) return;
 
-            int required = config.DeathHeadReviveTime.Value;
+            int required = config.DeathHeadReviveRequiredTime.Value;
             if (required < 0) return;
 
             var deathHeads = Object.FindObjectsByType<PlayerDeathHead>(FindObjectsSortMode.None);

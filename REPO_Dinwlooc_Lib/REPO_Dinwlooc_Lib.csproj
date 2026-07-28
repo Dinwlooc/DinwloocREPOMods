@@ -90,4 +90,9 @@
 		</PropertyGroup>
 	</Target>
 
+	<!-- ================ 新增目标：复制 DLL 到上级各模组的 Libs 文件夹（仅 Release） ================ -->
+	<Target Name="CopyToOtherMods" AfterTargets="Build" Condition="'$(Configuration)'=='Release'">
+		<Exec Command="powershell -NoProfile -NonInteractive -Command &quot;&amp; { $base='D:\BepInEx_Project\R.E.P.O'; $src='$(TargetPath)'; $exclude=@('REPO_Dinwlooc_Lib','.vs','.git'); if (Test-Path $base) { Get-ChildItem $base -Directory | Where-Object { $exclude -notcontains $_.Name } | ForEach-Object { $libDir=Join-Path $_.FullName 'Libs'; if (!(Test-Path $libDir)) { New-Item -ItemType Directory -Path $libDir -Force | Out-Null }; if (Test-Path $src) { Copy-Item $src $libDir -Force; Write-Host &quot;Copied to $libDir&quot; } } } else { Write-Host 'Base directory not found: $base' -ForegroundColor Yellow } }&quot;" />
+	</Target>
+
 </Project>

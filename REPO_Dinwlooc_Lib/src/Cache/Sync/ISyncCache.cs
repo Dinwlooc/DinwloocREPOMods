@@ -1,4 +1,5 @@
 ﻿using System;
+using PhotonHashtable = ExitGames.Client.Photon.Hashtable;
 
 namespace Dinwlooc.Common.Sync
 {
@@ -14,6 +15,11 @@ namespace Dinwlooc.Common.Sync
         void ProcessMergeObject(object key, object value);
         void ProcessMergeBinary(object key, byte[] data);
         void SyncNow();
+
+        /// <summary>
+        /// 获取当前缓存的全量快照，用于网络同步。
+        /// </summary>
+        PhotonHashtable GetSnapshot();
     }
 
     public interface ISyncCache<TKey, TValue> : ISyncCache where TKey : notnull

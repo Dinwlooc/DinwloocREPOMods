@@ -19,7 +19,7 @@ namespace SuperEnergy
         public void Process(bool isHost, float deltaTime)
         {
             SuperEnergyConfig config = SuperEnergyConfig.Instance;
-            if (!config.EnableStaminaBoost.Value)
+            if (!config.StaminaBoostEnabled.Value)
                 return;
 
             PlayerAvatar player = _playerBridge.GetLocalPlayer();
@@ -29,7 +29,7 @@ namespace SuperEnergy
             if (!StaminaConfigManager.TryGetEffectiveConfig(out RemoteStaminaConfig? remoteConfig))
                 return;
 
-            if (remoteConfig == null)  // 显式空检查
+            if (remoteConfig == null)
                 return;
 
             int percent = remoteConfig.Percent;

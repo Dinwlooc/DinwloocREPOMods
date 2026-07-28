@@ -12,7 +12,7 @@ namespace SuperEnergy
         private readonly List<ItemHealthPack> _healthPackPool = new();
         private float _lastHealTime = -1f;
         private float _lastPoolRefreshTime = -1f;
-        private const float PoolRefreshInterval = 5f;  
+        private const float PoolRefreshInterval = 5f;
 
         public PlayerHealHandler()
         {
@@ -23,27 +23,25 @@ namespace SuperEnergy
         public void Process(bool isHost, float deltaTime)
         {
             var config = SuperEnergyConfig.Instance;
-            if (!config.EnablePlayerHeal.Value || !isHost) return;
+            if (!config.PlayerHealEnabled.Value || !isHost) return;
 
-            int interval = config.HealInterval.Value;
-            int amount = config.HealAmount.Value;
+            int interval = config.PlayerHealInterval.Value;
+            int amount = config.PlayerHealAmount.Value;
             if (interval <= 0 || amount <= 0) return;
 
-            // 刷新医疗包池（定期）
             if (_lastPoolRefreshTime < 0f || Time.time - _lastPoolRefreshTime >= PoolRefreshInterval)
             {
                 _lastPoolRefreshTime = Time.time;
                 RefreshHealthPackPool();
             }
 
-            // 治疗计时
             if (_lastHealTime < 0f)
                 _lastHealTime = Time.time;
             if (Time.time - _lastHealTime < interval)
                 return;
             _lastHealTime += interval;
 
-            HealSource source = config.HealSourceSetting.Value;
+            HealSource source = config.PlayerHealSource.Value;
             var players = _playerBridge.GetAllPlayers();
             if (players == null || players.Count == 0) return;
 
@@ -61,10 +59,9 @@ namespace SuperEnergy
                     if (consumed > 0)
                     {
                         _playerBridge.HealPlayer(player, consumed, true);
-                        // 若医疗包被完全消耗，桥接内部已触发 UsedRPC，无需额外操作
                     }
                 }
-                else // HealSource.Free
+                else
                 {
                     _playerBridge.HealPlayer(player, amount, true);
                 }

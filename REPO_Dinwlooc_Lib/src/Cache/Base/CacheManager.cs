@@ -54,7 +54,7 @@ namespace Dinwlooc.Common.Caching
             Func<BinaryReader, TValue>? deserialize = null,
             Func<TValue, TValue, TValue>? mergeFunc = null) where TKey : notnull
         {
-            ISyncCache<TKey, TValue> cache = SyncRegionManager.Instance.GetOrCreateSyncCache<TKey, TValue>(
+            ISyncCache<TKey, TValue> cache = SyncManager.Instance.GetOrCreateSyncCache<TKey, TValue>(
                 cacheName, mode, mergeFunc, serialize, deserialize);
 
             if (!_caches.ContainsKey(cacheName))

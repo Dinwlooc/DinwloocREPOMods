@@ -18,7 +18,7 @@ namespace Dinwlooc.Common.Bridge
         public ItemBattery? GetHeldItemBattery(PlayerAvatar player)
         {
             if (player?.physGrabber == null) return null;
-            var grabbed = player.physGrabber.grabbedObject;
+            Rigidbody? grabbed = player.physGrabber.grabbedObject;
             if (grabbed == null) return null;
             return grabbed.GetComponent<ItemBattery>();
         }
@@ -43,6 +43,18 @@ namespace Dinwlooc.Common.Bridge
             int newLife = Mathf.Min(100, current + amountPercent);
             if (newLife <= current) return;
             battery.SetBatteryLife(newLife);
+        }
+
+        /// <summary>
+        /// 获取玩家手持物品的 EnemyValuable 组件。
+        /// grabbedObject 是 Rigidbody，直接获取其上的 EnemyValuable 组件。
+        /// </summary>
+        public EnemyValuable? GetHeldValuable(PlayerAvatar player)
+        {
+            if (player?.physGrabber == null) return null;
+            Rigidbody? grabbed = player.physGrabber.grabbedObject;
+            if (grabbed == null) return null;
+            return grabbed.GetComponent<EnemyValuable>();
         }
 
         // ---------- IHealthPackBridge ----------

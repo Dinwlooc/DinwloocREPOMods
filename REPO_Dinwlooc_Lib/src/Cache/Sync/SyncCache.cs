@@ -3,10 +3,13 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
-using Photon.Pun;
+using PhotonHashtable = ExitGames.Client.Photon.Hashtable;
 
 namespace Dinwlooc.Common.Sync
 {
+    /// <summary>
+    /// 纯本地缓存，无任何网络感知。
+    /// </summary>
     internal class SyncCache<TKey, TValue> : ISyncCache<TKey, TValue> where TKey : notnull
     {
         private readonly ConcurrentDictionary<TKey, TValue> _cache = new ConcurrentDictionary<TKey, TValue>();
@@ -56,18 +59,6 @@ namespace Dinwlooc.Common.Sync
         {
             if (_cache.TryGetValue(key, out TValue oldVal) &&
                 EqualityComparer<TValue>.Default.Equals(oldVal, inputVal))
-            {
-                return;
-            }
-
-            bool isHost = PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom;
-            bool canWrite = isHost || (_mode == SyncMode.ClientSnapshot) || (_mode == SyncMode.Merge);
-            if (!canWrite)
-            {
-                return;
-            }
-
-            if (_mode == SyncMode.Merge && !isHost)
             {
                 return;
             }
@@ -163,6 +154,18 @@ namespace Dinwlooc.Common.Sync
             return _serializationStrategy.DeserializeFromObject(serializedObj);
         }
 
+        // ---- 实现 ISyncCache.GetSnapshot ----
+        public PhotonHashtable GetSnapshot()
+        {
+            PhotonHashtable snapshot = new PhotonHashtable();
+            foreach (KeyValuePair<TKey, TValue> kv in _cache)
+            {
+                snapshot[kv.Key] = kv.Value;
+            }
+            return snapshot;
+        }
+
+        // 内部保留，以备后用（但不再用于快照）
         internal ConcurrentDictionary<TKey, TValue> GetAllData()
         {
             return _cache;
@@ -250,7 +253,8 @@ namespace Dinwlooc.Common.Sync
 
         void ISyncCache.ProcessMergeBinary(object keyObj, byte[] rawData)
         {
-            try {
+            try
+            {
                 TValue incomingVal;
                 if (keyObj is TKey typedKey)
                 {

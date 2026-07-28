@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using ExitGames.Client.Photon;
+using PhotonHashtable = ExitGames.Client.Photon.Hashtable;
 
 namespace Dinwlooc.Common.Sync
 {
@@ -8,8 +9,7 @@ namespace Dinwlooc.Common.Sync
     {
         private static bool TryGetCache(string cacheName, out ISyncCache cache)
         {
-            // 通过 SyncRegionManager 的 SyncCaches 属性访问
-            if (SyncRegionManager.Instance.SyncCaches.TryGetValue(cacheName, out ISyncCache? c))
+            if (SyncManager.Instance.SyncCaches.TryGetValue(cacheName, out ISyncCache? c))
             {
                 cache = c;
                 return true;
@@ -42,7 +42,7 @@ namespace Dinwlooc.Common.Sync
             cache.ApplyRemoteClear();
         }
 
-        internal static void ApplyFullSnapshot(string cacheName, Hashtable snapshot)
+        internal static void ApplyFullSnapshot(string cacheName, PhotonHashtable snapshot)
         {
             if (!TryGetCache(cacheName, out ISyncCache cache)) return;
             cache.ApplyRemoteClear();

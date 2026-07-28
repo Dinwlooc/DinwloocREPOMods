@@ -2,18 +2,23 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using Photon.Pun;
 using Photon.Realtime;
 using UnityEngine;
+using PhotonHashtable = ExitGames.Client.Photon.Hashtable;
 
 namespace Dinwlooc.Common.Sync
 {
-    public class SyncRegionManager : MonoBehaviourPunCallbacks
+    /// <summary>
+    /// 同步管理器，负责缓存创建、网络广播和权限控制。
+    /// </summary>
+    public class SyncManager : MonoBehaviourPunCallbacks
     {
-        private static SyncRegionManager? _instance;
+        private static SyncManager? _instance;
         private static readonly object _lock = new object();
 
-        public static SyncRegionManager Instance
+        public static SyncManager Instance
         {
             get
             {
@@ -23,9 +28,9 @@ namespace Dinwlooc.Common.Sync
                     {
                         if (_instance == null)
                         {
-                            GameObject go = new GameObject(nameof(SyncRegionManager));
+                            GameObject go = new GameObject(nameof(SyncManager));
                             DontDestroyOnLoad(go);
-                            _instance = go.AddComponent<SyncRegionManager>();
+                            _instance = go.AddComponent<SyncManager>();
                         }
                     }
                 }
@@ -35,6 +40,7 @@ namespace Dinwlooc.Common.Sync
 
         internal readonly ConcurrentDictionary<string, ISyncCache> SyncCaches = new ConcurrentDictionary<string, ISyncCache>();
         private bool _isNetworkReady = false;
+        private const string LOG_TAG = "[SyncManager]";
 
         private void Awake()
         {
@@ -45,15 +51,6 @@ namespace Dinwlooc.Common.Sync
             }
             _instance = this;
             DontDestroyOnLoad(gameObject);
-        }
-
-        private void Update()
-        {
-            if (!_isNetworkReady && PhotonNetwork.IsConnected && PhotonNetwork.InRoom)
-            {
-                _isNetworkReady = true;
-                Core.CommonPlugin.Logger.LogInfo("SyncRegionManager 检测到网络就绪（已加入房间）。");
-            }
         }
 
         public ISyncCache<TKey, TValue> GetOrCreateSyncCache<TKey, TValue>(
@@ -77,10 +74,13 @@ namespace Dinwlooc.Common.Sync
 
             newCache.OnDataChanged += (key, value) =>
             {
-                if (!_isNetworkReady) return;
+                if (!_isNetworkReady)
+                    return;
+
                 bool isHost = PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom;
                 bool canBroadcast = isHost || (mode == SyncMode.ClientSnapshot) || (mode == SyncMode.Merge);
-                if (!canBroadcast) return;
+                if (!canBroadcast)
+                    return;
 
                 if (isHost && (mode == SyncMode.HostAuthority || mode == SyncMode.Merge))
                 {
@@ -125,7 +125,8 @@ namespace Dinwlooc.Common.Sync
 
             newCache.OnDataRemoved += (key) =>
             {
-                if (!_isNetworkReady) return;
+                if (!_isNetworkReady)
+                    return;
                 bool isHost = PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom;
                 if (isHost && (mode == SyncMode.HostAuthority || mode == SyncMode.Merge))
                 {
@@ -135,7 +136,8 @@ namespace Dinwlooc.Common.Sync
 
             newCache.OnDataCleared += () =>
             {
-                if (!_isNetworkReady) return;
+                if (!_isNetworkReady)
+                    return;
                 bool isHost = PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom;
                 if (isHost && (mode == SyncMode.HostAuthority || mode == SyncMode.Merge))
                 {
@@ -143,7 +145,7 @@ namespace Dinwlooc.Common.Sync
                 }
             };
 
-            Core.CommonPlugin.Logger.LogInfo($"同步缓存 '{cacheName}' 已创建（模式：{mode}）。");
+            Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 缓存 '{cacheName}' 已创建（模式：{mode}）。");
             return newCache;
         }
 
@@ -152,24 +154,120 @@ namespace Dinwlooc.Common.Sync
             return SyncCaches.TryGetValue(cacheName, out cache);
         }
 
+        // ---- Photon 回调 ----
         public override void OnJoinedRoom()
         {
             _isNetworkReady = true;
-            // 重置 SyncRpcModule 以确保监听器被正确注册（处理网络重连）
-            SyncRpcModule.Reset();
-            Core.CommonPlugin.Logger.LogInfo("SyncRegionManager 已加入房间，网络就绪。");
+            Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 已加入房间，网络就绪。");
+
+            if (PhotonNetwork.IsMasterClient)
+            {
+                Player newPlayer = null;
+                foreach (Player player in PhotonNetwork.CurrentRoom.Players.Values)
+                {
+                    if (player.ActorNumber != PhotonNetwork.LocalPlayer.ActorNumber && !player.IsInactive)
+                    {
+                        newPlayer = player;
+                        break;
+                    }
+                }
+                if (newPlayer != null)
+                {
+                    SendAllCachesToPlayer(newPlayer);
+                }
+            }
         }
 
         public override void OnLeftRoom()
         {
             _isNetworkReady = false;
-            Core.CommonPlugin.Logger.LogInfo("SyncRegionManager 离开房间，网络未就绪。");
+            Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 离开房间，网络未就绪。");
         }
 
         public override void OnDisconnected(DisconnectCause cause)
         {
             _isNetworkReady = false;
-            Core.CommonPlugin.Logger.LogInfo($"SyncRegionManager 断开连接，网络未就绪。原因: {cause}");
+            Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 断开连接，网络未就绪。原因: {cause}");
+        }
+
+        public override void OnMasterClientSwitched(Player newMasterClient)
+        {
+            if (newMasterClient.ActorNumber == PhotonNetwork.LocalPlayer.ActorNumber)
+            {
+                Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 此客户端成为新主机，广播全量缓存。");
+                BroadcastAllCachesToAll();
+            }
+        }
+
+        // ---- 快照推送（使用接口方法） ----
+        private void SendAllCachesToPlayer(Player targetPlayer)
+        {
+            foreach (KeyValuePair<string, ISyncCache> kv in SyncCaches)
+            {
+                string cacheName = kv.Key;
+                ISyncCache cache = kv.Value;
+                PhotonHashtable snapshot = cache.GetSnapshot();
+                if (snapshot.Count == 0)
+                    continue;
+                SyncRpcModule.SendFullSnapshotToPlayer(cacheName, snapshot, targetPlayer.ActorNumber);
+            }
+            Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 已向玩家 {targetPlayer.ActorNumber} 发送所有缓存快照。");
+        }
+
+        private void BroadcastAllCachesToAll()
+        {
+            foreach (KeyValuePair<string, ISyncCache> kv in SyncCaches)
+            {
+                string cacheName = kv.Key;
+                ISyncCache cache = kv.Value;
+                PhotonHashtable snapshot = cache.GetSnapshot();
+                if (snapshot.Count == 0)
+                    continue;
+                SyncRpcModule.BroadcastFullSnapshot(cacheName, snapshot);
+            }
+            Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 已广播所有缓存快照给所有客户端。");
+        }
+
+        // ---- 远程操作入口 ----
+        internal void ApplyRemoteSet(string cacheName, object key, object value)
+        {
+            if (SyncCaches.TryGetValue(cacheName, out ISyncCache cache))
+                cache.ApplyRemoteSetObject(key, value);
+        }
+
+        internal void ApplyRemoteSetBinary(string cacheName, object key, byte[] data)
+        {
+            if (SyncCaches.TryGetValue(cacheName, out ISyncCache cache))
+                cache.ApplyRemoteSetBinary(key, data);
+        }
+
+        internal void ApplyRemoteRemove(string cacheName, object key)
+        {
+            if (SyncCaches.TryGetValue(cacheName, out ISyncCache cache))
+                cache.ApplyRemoteRemove(key);
+        }
+
+        internal void ApplyRemoteClear(string cacheName)
+        {
+            if (SyncCaches.TryGetValue(cacheName, out ISyncCache cache))
+                cache.ApplyRemoteClear();
+        }
+
+        internal void ApplyMergeRequest(string cacheName, object key, object value)
+        {
+            if (SyncCaches.TryGetValue(cacheName, out ISyncCache cache))
+                cache.ProcessMergeObject(key, value);
+        }
+
+        internal void ApplyMergeRequestBinary(string cacheName, object key, byte[] data)
+        {
+            if (SyncCaches.TryGetValue(cacheName, out ISyncCache cache))
+                cache.ProcessMergeBinary(key, data);
+        }
+
+        public string[] GetAllCacheNames()
+        {
+            return SyncCaches.Keys.ToArray();
         }
     }
 }
