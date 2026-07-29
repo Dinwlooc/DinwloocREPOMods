@@ -15,18 +15,18 @@ namespace QuickReload
 
             var config = QuickReloadConfig.Instance;
 
-            // 添加“快速重载”按钮
+            // 添加“快速重载”按钮（文本使用英文，便于翻译插件识别）
             MenuHelper.AddEscapeMenuButton(
-                text: "快速重载",
+                text: "Quick Reload",
                 onClick: OnQuickReloadClicked,
                 enabledConfig: config.ReloadButtonEnabled,
                 posXConfig: config.ReloadButtonPosX,
                 posYConfig: config.ReloadButtonPosY
             );
 
-            // 添加“返回商店”按钮
+            // 添加“返回商店”按钮（文本使用英文）
             MenuHelper.AddEscapeMenuButton(
-                text: "返回商店",
+                text: "Go to Shop",
                 onClick: OnGoToShopClicked,
                 enabledConfig: config.ShopButtonEnabled,
                 posXConfig: config.ShopButtonPosX,

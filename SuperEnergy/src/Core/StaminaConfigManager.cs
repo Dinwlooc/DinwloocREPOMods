@@ -19,6 +19,7 @@ namespace SuperEnergy
         private bool _isInitialized = false;
         private bool _isSubscribed = false;
         private bool _isLevelLoaded = false;
+        private bool _pendingPush = false;
 
         private const string REMOTE_CONFIG_CACHE_NAME = "SuperEnergyRemoteConfig";
         private const string CONFIG_KEY = "current";
@@ -31,7 +32,8 @@ namespace SuperEnergy
             _isInitialized = true;
 
             SceneManager.sceneLoaded += OnSceneLoaded;
-            EventBus.Subscribe<PlayerLevelEnteredEvent>(OnPlayerLevelEntered);
+            EventBus.Subscribe<NetworkReadyEvent>(OnNetworkReady);
+            EventBus.Subscribe<LeftRoomEvent>(OnLeftRoom);
 
             SuperEnergy.Logger.LogInfo("体力配置管理器已初始化（等待关卡加载）。");
         }
@@ -42,7 +44,8 @@ namespace SuperEnergy
             _isInitialized = false;
 
             SceneManager.sceneLoaded -= OnSceneLoaded;
-            EventBus.Unsubscribe<PlayerLevelEnteredEvent>(OnPlayerLevelEntered);
+            EventBus.Unsubscribe<NetworkReadyEvent>(OnNetworkReady);
+            EventBus.Unsubscribe<LeftRoomEvent>(OnLeftRoom);
 
             if (_syncConfigCache != null)
             {
@@ -61,27 +64,57 @@ namespace SuperEnergy
                 _isLevelLoaded = true;
                 SuperEnergy.Logger.LogInfo($"检测到关卡场景加载：{scene.name}");
 
-                if (SuperEnergyConfig.Instance.SyncUseHostConfig.Value && _syncConfigCache == null)
+                if (SuperEnergyConfig.Instance.SyncUseHostConfig.Value)
                 {
-                    EnsureSyncCacheCreated();
-                    SubscribeEvents();
-
                     if (PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom)
                     {
-                        PushCurrentConfigToCache();
+                        if (PhotonNetwork.IsConnected && PhotonNetwork.InRoom)
+                        {
+                            EnsureSyncCacheCreated();
+                            PushCurrentConfigToCache();
+                            _pendingPush = false;
+                            SuperEnergy.Logger.LogInfo("网络已就绪，配置已推送。");
+                        }
+                        else
+                        {
+                            _pendingPush = true;
+                            SuperEnergy.Logger.LogInfo("网络未就绪，将在网络就绪后补发配置（若关卡仍加载）。");
+                        }
                     }
                 }
             }
             else
             {
                 _isLevelLoaded = false;
+                _pendingPush = false;
                 SuperEnergy.Logger.LogInfo("离开关卡场景。");
             }
         }
 
-        private void OnPlayerLevelEntered(PlayerLevelEnteredEvent evt)
+        private void OnNetworkReady(NetworkReadyEvent evt)
         {
-            // 保留但无需重复操作
+            if (_pendingPush && _isLevelLoaded && (PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom))
+            {
+                EnsureSyncCacheCreated();
+                PushCurrentConfigToCache();
+                _pendingPush = false;
+                SuperEnergy.Logger.LogInfo("网络就绪后补发配置（关卡已加载）。");
+            }
+            else
+            {
+                SuperEnergy.Logger.LogInfo($"网络就绪，但无需补发 (_pendingPush={_pendingPush}, _isLevelLoaded={_isLevelLoaded})");
+            }
+        }
+
+        private void OnLeftRoom(LeftRoomEvent evt)
+        {
+            if (_syncConfigCache != null)
+            {
+                _syncConfigCache.Clear();
+                SuperEnergy.Logger.LogInfo("离开房间，清空同步缓存。");
+            }
+            _pendingPush = false;
+            _isLevelLoaded = false;
         }
 
         private void SubscribeEvents()
@@ -109,14 +142,19 @@ namespace SuperEnergy
                 {
                     if (_isLevelLoaded)
                     {
-                        if (_syncConfigCache == null)
-                        {
-                            EnsureSyncCacheCreated();
-                            SubscribeEvents();
-                        }
                         if (PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom)
                         {
-                            PushCurrentConfigToCache();
+                            if (PhotonNetwork.IsConnected && PhotonNetwork.InRoom)
+                            {
+                                EnsureSyncCacheCreated();
+                                PushCurrentConfigToCache();
+                                _pendingPush = false;
+                            }
+                            else
+                            {
+                                _pendingPush = true;
+                                SuperEnergy.Logger.LogInfo("网络未就绪，配置将在网络就绪后补发。");
+                            }
                         }
                     }
                     else
@@ -127,18 +165,17 @@ namespace SuperEnergy
                 else
                 {
                     _syncConfigCache = null;
+                    _pendingPush = false;
                 }
                 return;
             }
 
             if (SuperEnergyConfig.Instance.SyncUseHostConfig.Value &&
                 _isLevelLoaded &&
-                (PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom))
+                (PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom) &&
+                PhotonNetwork.IsConnected && PhotonNetwork.InRoom)
             {
-                if (_syncConfigCache != null)
-                {
-                    PushCurrentConfigToCache();
-                }
+                PushCurrentConfigToCache();
             }
         }
 

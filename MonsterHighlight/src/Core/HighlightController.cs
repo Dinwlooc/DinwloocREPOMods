@@ -73,6 +73,7 @@ namespace MonsterHighlight
             }
 
             _visibleMonsters = new HashSet<int>(seenIDs);
+            // 批量初始应用高亮
             ApplyTextureHighlights(allEnemies);
             MonsterHighlight.Logger.LogInfo($"[HighlightController] Initial visible: {seenIDs.Count}");
         }
@@ -88,14 +89,15 @@ namespace MonsterHighlight
                 _isSubscribed = false;
             }
 
-            VisionEventGenerator.Instance.UnregisterStep(_config.GetCheckStepFrames());
+            int stepFrames = _config.GetCheckStepFrames();
+            VisionEventGenerator.Instance.UnregisterStep(stepFrames);
             _indicatorRenderer.ClearAllIndicators();
             _visibleMonsters.Clear();
         }
 
+        // 事件驱动：只更新单个怪物
         private void OnVisibilityChanged(MonsterVisibilityChangedEvent evt)
         {
-            // 高频日志已移除，避免刷屏
             if (evt.IsVisible)
                 _visibleMonsters.Add(evt.EnemyInstanceId);
             else
@@ -103,11 +105,28 @@ namespace MonsterHighlight
 
             if (_config.EnableEmission.Value)
             {
-                var enemies = _enemyBridge.GetAllEnemies();
-                ApplyTextureHighlights(enemies);
+                // 查找对应的 EnemyParent
+                var allEnemies = _enemyBridge.GetAllEnemies();
+                foreach (var ep in allEnemies)
+                {
+                    if (!_enemyBridge.IsEnemyValid(ep)) continue;
+                    if (_enemyBridge.GetEnemyInstanceId(ep) == evt.EnemyInstanceId)
+                    {
+                        ApplyHighlightToEnemy(ep, evt.IsVisible);
+                        break;
+                    }
+                }
             }
         }
 
+        private void ApplyHighlightToEnemy(EnemyParent ep, bool highlight)
+        {
+            Color color = MonsterHighlightConfig.GetHighlightColor(_config.HighlightPreset.Value);
+            _enemyBridge.ApplyHighlight(ep, highlight, color);
+            EventBus.Publish(new MonsterHighlightAppliedEvent(_enemyBridge.GetEnemyInstanceId(ep), highlight));
+        }
+
+        // 批量应用（用于初始）
         private void ApplyTextureHighlights(IReadOnlyList<EnemyParent> enemies)
         {
             Color color = MonsterHighlightConfig.GetHighlightColor(_config.HighlightPreset.Value);

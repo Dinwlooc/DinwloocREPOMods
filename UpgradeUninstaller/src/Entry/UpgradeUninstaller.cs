@@ -1,8 +1,10 @@
 ﻿using BepInEx;
 using BepInEx.Logging;
 using Dinwlooc.Common.Bridge;
+using Dinwlooc.Common.Core;
 using Dinwlooc.Common.Helpers;
 using UpgradeUninstaller.src.Core.Services;
+using System.Collections.Generic;
 
 namespace UpgradeUninstaller
 {
@@ -21,16 +23,15 @@ namespace UpgradeUninstaller
             Instance = this;
             Logger = base.Logger;
 
-            // 初始化配置
+            RegisterTranslations();
+
             UninstallConfig.Instance.Initialize(Config);
 
-            // 创建控制器
             var calculator = new UninstallCalculator();
             _controller = new UninstallController(calculator, Logger);
 
-            // 添加菜单按钮
             MenuHelper.AddEscapeMenuButton(
-                text: "卸载升级",
+                text: "Uninstall Upgrades",
                 onClick: OnUninstallButtonClicked,
                 enabledConfig: UninstallConfig.Instance.Enabled,
                 posXConfig: UninstallConfig.Instance.PosX,
@@ -38,6 +39,24 @@ namespace UpgradeUninstaller
             );
 
             Logger.LogInfo($"{Info.Metadata.GUID} v{Info.Metadata.Version} loaded!");
+        }
+
+        private void RegisterTranslations()
+        {
+            var translations = new Dictionary<string, string>
+            {
+                ["Uninstall Upgrades"] = "卸载升级",
+                ["Uninstall Button Enabled"] = "显示卸载按钮",
+                ["Uninstall Button Pos X"] = "按钮 X 偏移",
+                ["Uninstall Button Pos Y"] = "按钮 Y 偏移"
+            };
+
+            TranslationManager.RegisterTranslations(
+                Info.Metadata.GUID,
+                "zh",
+                1,
+                translations
+            );
         }
 
         private void OnUninstallButtonClicked()

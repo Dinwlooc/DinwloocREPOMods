@@ -11,6 +11,7 @@ namespace MonsterHighlight
         private const int MAX_POOL_SIZE = 50;
         private const float CORNER_SIZE = 50f;
         private bool _loggedUIAssetFailure = false;
+        private List<int> _toRemove = new List<int>(); // 复用列表，减少 GC
 
         private bool GetUIAssets(out GameObject prefab, out RectTransform canvasRect)
         {
@@ -155,6 +156,7 @@ namespace MonsterHighlight
                     ReturnToPool(kv.Value);
             }
             _activeIndicators.Clear();
+            _toRemove.Clear(); // 清空复用列表
         }
 
         public void Dispose()
@@ -194,11 +196,12 @@ namespace MonsterHighlight
                 return;
             }
 
-            List<int> toRemove = new List<int>();
+            // 复用列表，避免分配
+            _toRemove.Clear();
             foreach (var kv in _activeIndicators)
                 if (!worldPositions.ContainsKey(kv.Key))
-                    toRemove.Add(kv.Key);
-            foreach (int id in toRemove)
+                    _toRemove.Add(kv.Key);
+            foreach (int id in _toRemove)
             {
                 if (_activeIndicators.TryGetValue(id, out GameObject go))
                 {
@@ -259,12 +262,10 @@ namespace MonsterHighlight
                 }
                 float finalSize = CORNER_SIZE * scale * sizeScale;
 
-                // 中间指示器
                 graphic.middle.anchoredPosition = localPoint;
                 graphic.middle.sizeDelta = new Vector2(finalSize * 0.4f, finalSize * 0.4f);
                 SetImageColor(graphic.middle, centerColor);
 
-                // 四个角指示器
                 float cornerOffset = finalSize * 0.5f;
                 graphic.topLeft.anchoredPosition = localPoint + new Vector2(-cornerOffset, cornerOffset);
                 graphic.topRight.anchoredPosition = localPoint + new Vector2(cornerOffset, cornerOffset);

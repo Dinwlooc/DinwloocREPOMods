@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using PhotonHashtable = ExitGames.Client.Photon.Hashtable;
+using Dinwlooc.Common.Reflection; // 新增
 
 namespace Dinwlooc.Common.Sync
 {
@@ -41,27 +42,18 @@ namespace Dinwlooc.Common.Sync
             _deserialize = deserialize;
 
             if (serialize != null && deserialize != null)
-            {
                 _serializationStrategy = new BinaryStrategy<TValue>(serialize, deserialize);
-            }
             else
-            {
                 _serializationStrategy = new HashtableStrategy<TValue>();
-            }
         }
 
-        public bool TryGet(TKey key, out TValue outputVal)
-        {
-            return _cache.TryGetValue(key, out outputVal);
-        }
+        public bool TryGet(TKey key, out TValue outputVal) => _cache.TryGetValue(key, out outputVal);
 
         public void Set(TKey key, TValue inputVal, TimeSpan? expiration = null)
         {
             if (_cache.TryGetValue(key, out TValue oldVal) &&
                 EqualityComparer<TValue>.Default.Equals(oldVal, inputVal))
-            {
                 return;
-            }
 
             _cache[key] = inputVal;
             OnDataChanged?.Invoke(key, inputVal);
@@ -70,10 +62,7 @@ namespace Dinwlooc.Common.Sync
         public bool Remove(TKey key)
         {
             bool removed = _cache.TryRemove(key, out _);
-            if (removed)
-            {
-                OnDataRemoved?.Invoke(key);
-            }
+            if (removed) OnDataRemoved?.Invoke(key);
             return removed;
         }
 
@@ -87,13 +76,8 @@ namespace Dinwlooc.Common.Sync
 
         internal void ApplyMerge(TKey key, TValue incomingVal)
         {
-            if (_cache.TryGetValue(key, out TValue currentVal))
-            {
-                if (_mergeFunc != null)
-                {
-                    incomingVal = _mergeFunc(currentVal, incomingVal);
-                }
-            }
+            if (_cache.TryGetValue(key, out TValue currentVal) && _mergeFunc != null)
+                incomingVal = _mergeFunc(currentVal, incomingVal);
             _cache[key] = incomingVal;
             OnDataChanged?.Invoke(key, incomingVal);
         }
@@ -106,13 +90,9 @@ namespace Dinwlooc.Common.Sync
                 using (BinaryWriter writer = new BinaryWriter(ms, Encoding.UTF8, true))
                 {
                     if (_serialize != null)
-                    {
                         _serialize(writer, targetVal);
-                    }
                     else
-                    {
                         _serializationStrategy.SerializeToBinary(targetVal);
-                    }
                 }
                 return ms.ToArray();
             }
@@ -132,9 +112,7 @@ namespace Dinwlooc.Common.Sync
                 using (BinaryReader reader = new BinaryReader(ms, Encoding.UTF8, true))
                 {
                     if (_deserialize != null)
-                    {
                         return _deserialize(reader);
-                    }
                     return _serializationStrategy.DeserializeFromBinary(rawData);
                 }
             }
@@ -144,50 +122,39 @@ namespace Dinwlooc.Common.Sync
             }
         }
 
-        internal object SerializeToObject(TValue targetVal)
-        {
-            return _serializationStrategy.SerializeToObject(targetVal);
-        }
+        internal object SerializeToObject(TValue targetVal) => _serializationStrategy.SerializeToObject(targetVal);
+        internal TValue DeserializeFromObject(object serializedObj) => _serializationStrategy.DeserializeFromObject(serializedObj);
 
-        internal TValue DeserializeFromObject(object serializedObj)
-        {
-            return _serializationStrategy.DeserializeFromObject(serializedObj);
-        }
-
-        // ---- 实现 ISyncCache.GetSnapshot ----
         public PhotonHashtable GetSnapshot()
         {
             PhotonHashtable snapshot = new PhotonHashtable();
-            foreach (KeyValuePair<TKey, TValue> kv in _cache)
-            {
+            foreach (var kv in _cache)
                 snapshot[kv.Key] = kv.Value;
-            }
             return snapshot;
         }
 
-        // 内部保留，以备后用（但不再用于快照）
-        internal ConcurrentDictionary<TKey, TValue> GetAllData()
-        {
-            return _cache;
-        }
+        internal ConcurrentDictionary<TKey, TValue> GetAllData() => _cache;
 
         // ---- ISyncCache 显式实现 ----
         void ISyncCache.ApplyRemoteSetObject(object keyObj, object valObj)
         {
             try
             {
-                if (keyObj is TKey typedKey && valObj is TValue typedVal)
+                // 使用 ReflectionCache 进行类型转换，避免异常
+                object? convertedKeyObj = ReflectionCache.ChangeType(keyObj, typeof(TKey));
+                object? convertedValObj = ReflectionCache.ChangeType(valObj, typeof(TValue));
+                if (convertedKeyObj == null || convertedValObj == null)
                 {
-                    ApplyRemoteSet(typedKey, typedVal);
+                    Core.CommonPlugin.Logger.LogError($"ApplyRemoteSetObject 转换失败：键或值为 null");
                     return;
                 }
-                TKey convertedKey = (TKey)Convert.ChangeType(keyObj, typeof(TKey));
-                TValue convertedVal = (TValue)Convert.ChangeType(valObj, typeof(TValue));
-                ApplyRemoteSet(convertedKey, convertedVal);
+                TKey typedKey = (TKey)convertedKeyObj;
+                TValue typedVal = (TValue)convertedValObj;
+                ApplyRemoteSet(typedKey, typedVal);
             }
             catch (Exception ex)
             {
-                Core.CommonPlugin.Logger.LogError($"ApplyRemoteSetObject 类型转换失败: {ex}");
+                Core.CommonPlugin.Logger.LogError($"ApplyRemoteSetObject 失败: {ex}");
             }
         }
 
@@ -195,20 +162,25 @@ namespace Dinwlooc.Common.Sync
         {
             try
             {
-                TValue val;
-                if (keyObj is TKey typedKey)
+                TKey typedKey;
+                if (keyObj is TKey key)
+                    typedKey = key;
+                else
                 {
-                    val = DeserializeFromBinary(rawData);
-                    ApplyRemoteSet(typedKey, val);
-                    return;
+                    object? converted = ReflectionCache.ChangeType(keyObj, typeof(TKey));
+                    if (converted == null)
+                    {
+                        Core.CommonPlugin.Logger.LogError($"ApplyRemoteSetBinary 键转换失败：{keyObj}");
+                        return;
+                    }
+                    typedKey = (TKey)converted;
                 }
-                TKey convertedKey = (TKey)Convert.ChangeType(keyObj, typeof(TKey));
-                val = DeserializeFromBinary(rawData);
-                ApplyRemoteSet(convertedKey, val);
+                TValue val = DeserializeFromBinary(rawData);
+                ApplyRemoteSet(typedKey, val);
             }
             catch (Exception ex)
             {
-                Core.CommonPlugin.Logger.LogError($"ApplyRemoteSetBinary 类型转换失败: {ex}");
+                Core.CommonPlugin.Logger.LogError($"ApplyRemoteSetBinary 失败: {ex}");
             }
         }
 
@@ -216,17 +188,18 @@ namespace Dinwlooc.Common.Sync
         {
             try
             {
-                if (keyObj is TKey typedKey)
+                if (keyObj is TKey key)
+                    ApplyRemoteRemove(key);
+                else
                 {
-                    ApplyRemoteRemove(typedKey);
-                    return;
+                    object? converted = ReflectionCache.ChangeType(keyObj, typeof(TKey));
+                    if (converted != null)
+                        ApplyRemoteRemove((TKey)converted);
                 }
-                TKey convertedKey = (TKey)Convert.ChangeType(keyObj, typeof(TKey));
-                ApplyRemoteRemove(convertedKey);
             }
             catch (Exception ex)
             {
-                Core.CommonPlugin.Logger.LogError($"ApplyRemoteRemove 类型转换失败: {ex}");
+                Core.CommonPlugin.Logger.LogError($"ApplyRemoteRemove 失败: {ex}");
             }
         }
 
@@ -236,18 +209,18 @@ namespace Dinwlooc.Common.Sync
         {
             try
             {
-                if (keyObj is TKey typedKey && valObj is TValue typedVal)
+                object? convertedKey = ReflectionCache.ChangeType(keyObj, typeof(TKey));
+                object? convertedVal = ReflectionCache.ChangeType(valObj, typeof(TValue));
+                if (convertedKey == null || convertedVal == null)
                 {
-                    ApplyMerge(typedKey, typedVal);
+                    Core.CommonPlugin.Logger.LogError($"ProcessMergeObject 转换失败：键或值为 null");
                     return;
                 }
-                TKey convertedKey = (TKey)Convert.ChangeType(keyObj, typeof(TKey));
-                TValue convertedVal = (TValue)Convert.ChangeType(valObj, typeof(TValue));
-                ApplyMerge(convertedKey, convertedVal);
+                ApplyMerge((TKey)convertedKey, (TValue)convertedVal);
             }
             catch (Exception ex)
             {
-                Core.CommonPlugin.Logger.LogError($"ProcessMergeObject 类型转换失败: {ex}");
+                Core.CommonPlugin.Logger.LogError($"ProcessMergeObject 失败: {ex}");
             }
         }
 
@@ -255,20 +228,25 @@ namespace Dinwlooc.Common.Sync
         {
             try
             {
-                TValue incomingVal;
-                if (keyObj is TKey typedKey)
+                TKey typedKey;
+                if (keyObj is TKey key)
+                    typedKey = key;
+                else
                 {
-                    incomingVal = DeserializeFromBinary(rawData);
-                    ApplyMerge(typedKey, incomingVal);
-                    return;
+                    object? converted = ReflectionCache.ChangeType(keyObj, typeof(TKey));
+                    if (converted == null)
+                    {
+                        Core.CommonPlugin.Logger.LogError($"ProcessMergeBinary 键转换失败：{keyObj}");
+                        return;
+                    }
+                    typedKey = (TKey)converted;
                 }
-                TKey convertedKey = (TKey)Convert.ChangeType(keyObj, typeof(TKey));
-                incomingVal = DeserializeFromBinary(rawData);
-                ApplyMerge(convertedKey, incomingVal);
+                TValue val = DeserializeFromBinary(rawData);
+                ApplyMerge(typedKey, val);
             }
             catch (Exception ex)
             {
-                Core.CommonPlugin.Logger.LogError($"ProcessMergeBinary 类型转换失败: {ex}");
+                Core.CommonPlugin.Logger.LogError($"ProcessMergeBinary 失败: {ex}");
             }
         }
 
@@ -282,9 +260,6 @@ namespace Dinwlooc.Common.Sync
 
         internal void ApplyRemoteRemove(TKey key) => _cache.TryRemove(key, out _);
         internal void ApplyRemoteClear() => _cache.Clear();
-
-        internal void SyncNow()
-        {
-        }
+        internal void SyncNow() { }
     }
 }
