@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using Dinwlooc.Common.Sync;
 
@@ -52,17 +53,17 @@ namespace Dinwlooc.Common.Caching
             SyncMode mode,
             Action<BinaryWriter, TValue>? serialize = null,
             Func<BinaryReader, TValue>? deserialize = null,
-            Func<TValue, TValue, TValue>? mergeFunc = null) where TKey : notnull
+            Func<TValue, TValue, TValue>? mergeFunc = null)
+            where TKey : notnull
         {
+            if (_caches.TryGetValue(cacheName, out object existing) && existing is ISyncCache<TKey, TValue> typed)
+                return typed;
+
             ISyncCache<TKey, TValue> cache = SyncManager.Instance.GetOrCreateSyncCache<TKey, TValue>(
                 cacheName, mode, mergeFunc, serialize, deserialize);
 
-            if (!_caches.ContainsKey(cacheName))
-            {
-                _caches.TryAdd(cacheName, cache);
-                Core.CommonPlugin.Logger.LogInfo($"同步缓存 '{cacheName}' 已注册到缓存中心。");
-            }
-
+            _caches[cacheName] = cache;
+            Core.CommonPlugin.Logger.LogInfo($"同步缓存 '{cacheName}' 已注册到缓存中心。");
             return cache;
         }
 
@@ -74,6 +75,34 @@ namespace Dinwlooc.Common.Caching
         public static void ClearAll()
         {
             _caches.Clear();
+        }
+
+        /// <summary>
+        /// 获取所有同步缓存（用于遍历广播）。
+        /// </summary>
+        public static ISyncCache[] GetAllSyncCaches()
+        {
+            List<ISyncCache> list = new List<ISyncCache>();
+            foreach (object obj in _caches.Values)
+            {
+                if (obj is ISyncCache sync)
+                    list.Add(sync);
+            }
+            return list.ToArray();
+        }
+
+        /// <summary>
+        /// 尝试根据名称获取同步缓存（非泛型）。
+        /// </summary>
+        public static bool TryGetSyncCache(string cacheName, out ISyncCache? cache)
+        {
+            if (_caches.TryGetValue(cacheName, out object obj) && obj is ISyncCache sync)
+            {
+                cache = sync;
+                return true;
+            }
+            cache = null;
+            return false;
         }
     }
 }

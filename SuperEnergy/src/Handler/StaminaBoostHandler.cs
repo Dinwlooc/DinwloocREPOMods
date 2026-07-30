@@ -1,14 +1,13 @@
 ﻿using Dinwlooc.Common.Bridge;
 using Dinwlooc.Common.IBridge;
-using Dinwlooc.Common.Caching;
 using UnityEngine;
 
 namespace SuperEnergy
 {
     public class StaminaBoostHandler : IEnergyHandler
     {
-        private IEnergyBridge _energyBridge = null!;
-        private IPlayerBridge _playerBridge = null!;
+        private readonly IEnergyBridge _energyBridge;
+        private readonly IPlayerBridge _playerBridge;
 
         public StaminaBoostHandler()
         {
@@ -26,15 +25,13 @@ namespace SuperEnergy
             if (player == null || !player.isLocal)
                 return;
 
-            if (!StaminaConfigManager.TryGetEffectiveConfig(out RemoteStaminaConfig? remoteConfig))
+            StaminaSyncConfig syncConfig = StaminaConfigManager.Instance.GetEffectiveConfig();
+            if (syncConfig == null)
                 return;
 
-            if (remoteConfig == null)
-                return;
-
-            int percent = remoteConfig.Percent;
-            bool comp = remoteConfig.CompensateWhenDisabled;
-            bool crouch = remoteConfig.EnableCrouchBoost;
+            int percent = syncConfig.Percent;
+            bool comp = syncConfig.CompensateWhenDisabled;
+            bool crouch = syncConfig.EnableCrouchBoost;
 
             float multiplier = 1f + percent / 100f;
 

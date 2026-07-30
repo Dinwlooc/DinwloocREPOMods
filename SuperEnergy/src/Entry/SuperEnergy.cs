@@ -21,16 +21,13 @@ namespace SuperEnergy
             Instance = this;
             Logger = base.Logger;
 
-            // 注册翻译（替代 LocalizationManager）
             RegisterTranslations();
 
-            // 绑定配置
             SuperEnergyConfig.Instance.Initialize(Config);
 
             _service = gameObject.AddComponent<EnergyService>();
             Config.SettingChanged += OnConfigSettingChanged;
-            _configManager = StaminaConfigManager.Instance;
-            _configManager.Initialize();
+            _configManager = StaminaConfigManager.Instance; // 自动初始化
 
             Logger.LogInfo($"{Info.Metadata.GUID} v{Info.Metadata.Version} has loaded!");
         }
@@ -68,7 +65,7 @@ namespace SuperEnergy
 
         private void OnConfigSettingChanged(object sender, BepInEx.Configuration.SettingChangedEventArgs e)
         {
-            _configManager?.OnSettingChanged(sender, e);
+            _configManager?.OnConfigSettingChanged(sender, e);
         }
 
         private void OnDestroy()

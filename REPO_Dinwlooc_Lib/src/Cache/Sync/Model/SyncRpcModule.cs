@@ -19,8 +19,7 @@ namespace Dinwlooc.Common.Sync
         private static Action<object, RaiseEventOptions, SendOptions>? _raiseEventDelegate = null;
         private static IOnEventCallback? _eventListener = null;
 
-        // 自适应事件码相关
-        private static int _currentFallbackCode = 200;        // 当前使用的原生事件码
+        private static int _currentFallbackCode = 200;
         private static bool _codeConflictDetected = false;
         private static readonly object _eventCodeLock = new object();
 
@@ -40,10 +39,6 @@ namespace Dinwlooc.Common.Sync
             ReceiveFullSnapshotBinary
         }
 
-        /// <summary>
-        /// 显式初始化网络监听器（必须在加入房间后、任何发送前调用）。
-        /// 若网络未就绪，不会标记为已初始化，发送时会再次尝试。
-        /// </summary>
         public static void EnsureInitialized()
         {
             if (_isInitialized && (_useREPOLib || _eventListener != null))
@@ -68,16 +63,12 @@ namespace Dinwlooc.Common.Sync
                 }
                 else
                 {
-                    // 网络未就绪，不标记为已初始化，下次发送时重试
                     _isInitialized = false;
                     Core.CommonPlugin.Logger.LogWarning($"{LOG_TAG} 网络未就绪，延迟初始化。");
                 }
             }
         }
 
-        /// <summary>
-        /// 重置监听器（断开连接或离开房间时调用）。
-        /// </summary>
         public static void Reset()
         {
             lock (_initLock)
@@ -91,7 +82,6 @@ namespace Dinwlooc.Common.Sync
                 _raiseEventDelegate = null;
                 _useREPOLib = false;
                 _isInitialized = false;
-                // 重置事件码相关状态
                 lock (_eventCodeLock)
                 {
                     _currentFallbackCode = 200;
@@ -143,10 +133,8 @@ namespace Dinwlooc.Common.Sync
 
         private static void OnNetworkedEventReceived(EventData photonEvent)
         {
-            // 如果数据不是 Hashtable 或缺少必要字段，说明该事件码被其他插件占用
             if (photonEvent.CustomData is not PhotonHashtable data || !data.ContainsKey("op"))
             {
-                // 仅当事件码等于我们当前使用的码时才触发冲突处理
                 if (photonEvent.Code == _currentFallbackCode)
                 {
                     Core.CommonPlugin.Logger.LogWarning($"{LOG_TAG} 检测到事件码 {_currentFallbackCode} 被其他插件占用，触发切换。");
@@ -164,22 +152,22 @@ namespace Dinwlooc.Common.Sync
             switch (op)
             {
                 case (byte)SubOpCode.ApplyData:
-                    SyncRpcProcessor.ApplyRemoteData(cacheName, data["k"], data["v"]);
+                    SyncManager.Instance.ApplyRemoteSet(cacheName, data["k"], data["v"]);
                     break;
                 case (byte)SubOpCode.ApplyDataBinary:
-                    SyncRpcProcessor.ApplyRemoteDataBinary(cacheName, data["k"], (byte[])data["v"]);
+                    SyncManager.Instance.ApplyRemoteSetBinary(cacheName, data["k"], (byte[])data["v"]);
                     break;
                 case (byte)SubOpCode.ApplyRemove:
-                    SyncRpcProcessor.ApplyRemoteRemove(cacheName, data["k"]);
+                    SyncManager.Instance.ApplyRemoteRemove(cacheName, data["k"]);
                     break;
                 case (byte)SubOpCode.ApplyClear:
-                    SyncRpcProcessor.ApplyRemoteClear(cacheName);
+                    SyncManager.Instance.ApplyRemoteClear(cacheName);
                     break;
                 case (byte)SubOpCode.ApplyFullSnapshot:
-                    SyncRpcProcessor.ApplyFullSnapshot(cacheName, (PhotonHashtable)data["v"]);
+                    ApplyFullSnapshot(cacheName, (PhotonHashtable)data["v"]);
                     break;
                 case (byte)SubOpCode.ApplyFullSnapshotBinary:
-                    SyncRpcProcessor.ApplyFullSnapshotBinary(cacheName, (Dictionary<object, byte[]>)data["v"]);
+                    ApplyFullSnapshotBinary(cacheName, (Dictionary<object, byte[]>)data["v"]);
                     break;
                 case (byte)SubOpCode.ReceiveSnapshot:
                 case (byte)SubOpCode.ReceiveSnapshotBinary:
@@ -187,11 +175,34 @@ namespace Dinwlooc.Common.Sync
                 case (byte)SubOpCode.ReceiveMergeRequestBinary:
                 case (byte)SubOpCode.ReceiveFullSnapshot:
                 case (byte)SubOpCode.ReceiveFullSnapshotBinary:
-                    SyncRpcProcessor.HandleSubOp(op, cacheName, data);
+                    // 这些子操作由 SyncManager 内部处理（已在对应发送方法中定向到 MasterClient）
+                    Core.CommonPlugin.Logger.LogWarning($"{LOG_TAG} 收到子操作码 {op}，已由 SyncManager 处理。");
                     break;
                 default:
                     Core.CommonPlugin.Logger.LogWarning($"{LOG_TAG} 未知操作码: {op}");
                     break;
+            }
+        }
+
+        private static void ApplyFullSnapshot(string cacheName, PhotonHashtable snapshot)
+        {
+            ISyncCache? cache = SyncManager.Instance.FindCacheByName(cacheName);
+            if (cache == null) return;
+            cache.ApplyRemoteClear();
+            foreach (object key in snapshot.Keys)
+            {
+                cache.ApplyRemoteSetObject(key, snapshot[key]);
+            }
+        }
+
+        private static void ApplyFullSnapshotBinary(string cacheName, Dictionary<object, byte[]> snapshot)
+        {
+            ISyncCache? cache = SyncManager.Instance.FindCacheByName(cacheName);
+            if (cache == null) return;
+            cache.ApplyRemoteClear();
+            foreach (KeyValuePair<object, byte[]> kv in snapshot)
+            {
+                cache.ApplyRemoteSetBinary(kv.Key, kv.Value);
             }
         }
 
@@ -206,20 +217,14 @@ namespace Dinwlooc.Common.Sync
             }
         }
 
-        /// <summary>
-        /// 核心发送方法——所有网络事件必经之路。
-        /// 若网络未就绪，事件被丢弃且仅记录警告，绝不影响游戏启动。
-        /// </summary>
         private static void SendEvent(SubOpCode op, string cacheName, object? key, object? value, RaiseEventOptions options)
         {
-            // 第一道防线：检查 Photon 连接状态
             if (!PhotonNetwork.IsConnected || !PhotonNetwork.InRoom)
             {
                 Core.CommonPlugin.Logger.LogWarning($"{LOG_TAG} 网络未连接或未在房间内，事件被丢弃（缓存：{cacheName}，操作：{op}）。");
                 return;
             }
 
-            // 确保监听器已初始化
             EnsureInitialized();
 
             PhotonHashtable data = new PhotonHashtable
@@ -230,7 +235,6 @@ namespace Dinwlooc.Common.Sync
             if (key != null) data["k"] = key;
             if (value != null) data["v"] = value;
 
-            // === 第一层：尝试 REPOLib ===
             if (_useREPOLib && _raiseEventDelegate != null)
             {
                 try
@@ -248,21 +252,18 @@ namespace Dinwlooc.Common.Sync
                 }
             }
 
-            // === 第二层：原生 Photon 发送（自适应事件码） ===
             bool sent = false;
             int attempts = 0;
-            const int maxAttempts = 56; // 200~255 共56个码
+            const int maxAttempts = 56;
 
             while (!sent && attempts < maxAttempts)
             {
-                // 若检测到冲突，先轮转（并计入尝试次数）
                 if (_codeConflictDetected)
                 {
                     lock (_eventCodeLock)
                     {
                         _currentFallbackCode = (_currentFallbackCode - 200 + 1) % 56 + 200;
                         _codeConflictDetected = false;
-                        // 重新注册监听器
                         if (_eventListener != null)
                         {
                             PhotonNetwork.RemoveCallbackTarget(_eventListener);
@@ -272,8 +273,8 @@ namespace Dinwlooc.Common.Sync
                         PhotonNetwork.AddCallbackTarget(_eventListener);
                         Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 事件码冲突，切换到 {_currentFallbackCode}");
                     }
-                    attempts++; // 冲突切换也算一次尝试
-                    continue;   // 重新循环，使用新码发送
+                    attempts++;
+                    continue;
                 }
 
                 try
@@ -283,7 +284,6 @@ namespace Dinwlooc.Common.Sync
                 }
                 catch (Exception ex)
                 {
-                    // 发送异常（如通道满），轮转码并增加尝试次数
                     Core.CommonPlugin.Logger.LogWarning($"{LOG_TAG} 原生发送失败 (码{_currentFallbackCode})，尝试切换。错误: {ex.Message}");
                     lock (_eventCodeLock)
                     {
@@ -296,7 +296,7 @@ namespace Dinwlooc.Common.Sync
                         _eventListener = new EventListener((byte)_currentFallbackCode);
                         PhotonNetwork.AddCallbackTarget(_eventListener);
                     }
-                    attempts++; // 发送异常也算一次尝试
+                    attempts++;
                 }
             }
 

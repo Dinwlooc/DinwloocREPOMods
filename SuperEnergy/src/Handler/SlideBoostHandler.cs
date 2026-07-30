@@ -43,14 +43,15 @@ namespace SuperEnergy
             if (ctrl == null)
                 return;
 
-            if (!StaminaConfigManager.TryGetEffectiveConfig(out RemoteStaminaConfig? remoteConfig) || remoteConfig == null)
-                return;
-
             SuperEnergyConfig config = SuperEnergyConfig.Instance;
             if (!config.SlideBoostEnabled.Value)
                 return;
 
-            int percent = remoteConfig.SlideBoostPercent;
+            StaminaSyncConfig syncConfig = StaminaConfigManager.Instance.GetEffectiveConfig();
+            if (syncConfig == null)
+                return;
+
+            int percent = syncConfig.SlideBoostPercent;
             if (_lastAppliedPercent == percent)
                 return;
 

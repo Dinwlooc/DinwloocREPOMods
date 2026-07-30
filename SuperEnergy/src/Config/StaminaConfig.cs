@@ -2,14 +2,17 @@
 
 namespace SuperEnergy
 {
-    public class RemoteStaminaConfig
+    /// <summary>
+    /// 同步配置对象，仅包含需要跨客户端同步的体力/滑铲字段。
+    /// </summary>
+    public class StaminaSyncConfig
     {
         public int Percent { get; }
         public bool CompensateWhenDisabled { get; }
         public bool EnableCrouchBoost { get; }
-        public int SlideBoostPercent { get; } // 新增
+        public int SlideBoostPercent { get; }
 
-        public RemoteStaminaConfig(int percent, bool comp, bool crouch, int slideBoostPercent = 0)
+        public StaminaSyncConfig(int percent, bool comp, bool crouch, int slideBoostPercent = 0)
         {
             Percent = percent;
             CompensateWhenDisabled = comp;
@@ -25,13 +28,13 @@ namespace SuperEnergy
             writer.Write(SlideBoostPercent);
         }
 
-        public static RemoteStaminaConfig Read(BinaryReader reader)
+        public static StaminaSyncConfig Read(BinaryReader reader)
         {
             int percent = reader.ReadInt32();
             bool comp = reader.ReadBoolean();
             bool crouch = reader.ReadBoolean();
             int slideBoost = reader.ReadInt32();
-            return new RemoteStaminaConfig(percent, comp, crouch, slideBoost);
+            return new StaminaSyncConfig(percent, comp, crouch, slideBoost);
         }
     }
 }

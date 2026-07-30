@@ -54,5 +54,7 @@ namespace Dinwlooc.Common.Bridge
             ?? throw new InvalidOperationException("IMenuBridge not registered.");
         public static ISlideBridge Slide => Get<ISlideBridge>()
     ?? throw new InvalidOperationException("ISlideBridge not registered.");
+        public static IMovementOverrideBridge MovementOverride => Get<IMovementOverrideBridge>()
+    ?? throw new InvalidOperationException("IMovementOverrideBridge not registered.");
     }
 }

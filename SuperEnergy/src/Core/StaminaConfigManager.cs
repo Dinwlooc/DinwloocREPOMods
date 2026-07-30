@@ -1,260 +1,333 @@
-﻿using System.IO;
-using Dinwlooc.Common.Bridge;
+﻿using System;
+using System.IO;
 using Dinwlooc.Common.Caching;
-using Dinwlooc.Common.Core;
-using Dinwlooc.Common.Events;
-using Dinwlooc.Common.IBridge;
+using Dinwlooc.Common.Networking;
 using Dinwlooc.Common.Sync;
+using ExitGames.Client.Photon;
 using Photon.Pun;
+using Photon.Realtime;
+using UnityEngine;
 using UnityEngine.SceneManagement;
 
 namespace SuperEnergy
 {
-    public class StaminaConfigManager
+    /// <summary>
+    /// 配置管理器：管理同步缓存，提供配置获取，支持客户端请求和超时降级。
+    /// 继承 <see cref="NetworkBehaviour"/> 自动处理网络事件订阅/取消。
+    /// </summary>
+    public class StaminaConfigManager : NetworkBehaviour
     {
         private static StaminaConfigManager? _instance;
-        public static StaminaConfigManager Instance => _instance ??= new StaminaConfigManager();
-
-        private ISyncCache<string, RemoteStaminaConfig>? _syncConfigCache;
-        private bool _isInitialized = false;
-        private bool _isSubscribed = false;
-        private bool _isLevelLoaded = false;
-        private bool _pendingPush = false;
-
-        private const string REMOTE_CONFIG_CACHE_NAME = "SuperEnergyRemoteConfig";
-        private const string CONFIG_KEY = "current";
-
-        private StaminaConfigManager() { }
-
-        public void Initialize()
+        public static StaminaConfigManager Instance
         {
-            if (_isInitialized) return;
-            _isInitialized = true;
+            get
+            {
+                if (_instance == null)
+                {
+                    GameObject go = new GameObject(nameof(StaminaConfigManager));
+                    DontDestroyOnLoad(go);
+                    _instance = go.AddComponent<StaminaConfigManager>();
+                }
+                return _instance;
+            }
+        }
+
+        // ---- 常量 ----
+        private const string SYNC_CACHE_NAME = "SuperEnergy_SyncConfig";
+        private const string SYNC_CACHE_KEY = "current";
+        private const float SYNC_TIMEOUT_SECONDS = 5f;
+        private const byte REQUEST_EVENT_CODE = 250;
+        private const string REQUEST_CONTENT = "RequestConfig";
+
+        // ---- 缓存 ----
+        private ISyncCache<string, StaminaSyncConfig>? _syncCache;
+
+        // ---- 状态 ----
+        private bool _isLevelLoaded;
+        private bool _isWaitingForSync;
+        private float _syncWaitStartTime;
+        private bool _hasReceivedSyncData;
+        private bool _hasRequestedAndTimedOut;
+
+        // ---- 初始化 ----
+        protected override void Awake()
+        {
+            base.Awake(); // 确保基类订阅事件
+
+            if (_instance != null && _instance != this)
+            {
+                Destroy(gameObject);
+                return;
+            }
+            _instance = this;
+            DontDestroyOnLoad(gameObject);
 
             SceneManager.sceneLoaded += OnSceneLoaded;
-            EventBus.Subscribe<NetworkReadyEvent>(OnNetworkReady);
-            EventBus.Subscribe<LeftRoomEvent>(OnLeftRoom);
-
-            SuperEnergy.Logger.LogInfo("体力配置管理器已初始化（等待关卡加载）。");
+            SuperEnergy.Logger.LogInfo("配置管理器已初始化（依赖 NetworkBehaviour）。");
         }
 
-        public void Shutdown()
+        protected override void OnDestroy()
         {
-            if (!_isInitialized) return;
-            _isInitialized = false;
-
             SceneManager.sceneLoaded -= OnSceneLoaded;
-            EventBus.Unsubscribe<NetworkReadyEvent>(OnNetworkReady);
-            EventBus.Unsubscribe<LeftRoomEvent>(OnLeftRoom);
-
-            if (_syncConfigCache != null)
-            {
-                _syncConfigCache.OnDataChanged -= OnConfigChanged;
-            }
-
-            UnsubscribeEvents();
-
-            SuperEnergy.Logger.LogInfo("体力配置管理器已关闭。");
+            base.OnDestroy();
+            _syncCache = null;
         }
 
+        // ---- 场景事件 ----
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
             if (SemiFunc.RunIsLevel())
             {
                 _isLevelLoaded = true;
-                SuperEnergy.Logger.LogInfo($"检测到关卡场景加载：{scene.name}");
+                SuperEnergy.Logger.LogInfo($"关卡加载：{scene.name}");
 
-                if (SuperEnergyConfig.Instance.SyncUseHostConfig.Value)
+                // 网络是否就绪由基类状态决定，但我们需要检查 Photon 连接状态
+                if (PhotonNetwork.IsConnected && PhotonNetwork.InRoom)
                 {
-                    if (PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom)
+                    bool useHost = SuperEnergyConfig.Instance.SyncUseHostConfig.Value;
+                    if (useHost && PhotonNetwork.IsMasterClient)
                     {
-                        if (PhotonNetwork.IsConnected && PhotonNetwork.InRoom)
-                        {
-                            EnsureSyncCacheCreated();
-                            PushCurrentConfigToCache();
-                            _pendingPush = false;
-                            SuperEnergy.Logger.LogInfo("网络已就绪，配置已推送。");
-                        }
-                        else
-                        {
-                            _pendingPush = true;
-                            SuperEnergy.Logger.LogInfo("网络未就绪，将在网络就绪后补发配置（若关卡仍加载）。");
-                        }
+                        EnsureSyncCacheCreated();
+                        PushCurrentConfigToCache();
                     }
+                    else if (useHost && !PhotonNetwork.IsMasterClient)
+                    {
+                        EnsureSyncCacheCreated();
+                        _hasReceivedSyncData = false;
+                        _isWaitingForSync = false;
+                        _hasRequestedAndTimedOut = false;
+                        RequestConfigFromHost();
+                    }
+                }
+                else
+                {
+                    SuperEnergy.Logger.LogInfo("关卡加载时网络未就绪，延迟网络操作。");
                 }
             }
             else
             {
                 _isLevelLoaded = false;
-                _pendingPush = false;
-                SuperEnergy.Logger.LogInfo("离开关卡场景。");
             }
         }
 
-        private void OnNetworkReady(NetworkReadyEvent evt)
+        // ---- NetworkBehaviour 重写 ----
+        protected override void OnNetworkReady()
         {
-            if (_pendingPush && _isLevelLoaded && (PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom))
+            // 网络就绪时，若关卡已加载且同步开启，则执行相应操作
+            if (!_isLevelLoaded) return;
+
+            bool useHost = SuperEnergyConfig.Instance.SyncUseHostConfig.Value;
+            if (useHost && PhotonNetwork.IsMasterClient && PhotonNetwork.InRoom)
             {
                 EnsureSyncCacheCreated();
                 PushCurrentConfigToCache();
-                _pendingPush = false;
-                SuperEnergy.Logger.LogInfo("网络就绪后补发配置（关卡已加载）。");
             }
-            else
+            else if (useHost && !PhotonNetwork.IsMasterClient)
             {
-                SuperEnergy.Logger.LogInfo($"网络就绪，但无需补发 (_pendingPush={_pendingPush}, _isLevelLoaded={_isLevelLoaded})");
+                EnsureSyncCacheCreated();
+                _hasReceivedSyncData = false;
+                _isWaitingForSync = false;
+                _hasRequestedAndTimedOut = false;
+                RequestConfigFromHost();
             }
         }
 
-        private void OnLeftRoom(LeftRoomEvent evt)
+        protected override void OnLeftRoom()
         {
-            if (_syncConfigCache != null)
-            {
-                _syncConfigCache.Clear();
-                SuperEnergy.Logger.LogInfo("离开房间，清空同步缓存。");
-            }
-            _pendingPush = false;
-            _isLevelLoaded = false;
+            _isWaitingForSync = false;
+            _hasReceivedSyncData = false;
+            _hasRequestedAndTimedOut = false;
+            // 基类已注销 Photon 回调，无需额外操作
         }
 
-        private void SubscribeEvents()
+        // ---- 自定义网络事件（处理客户端请求） ----
+        public override void OnEvent(EventData photonEvent)
         {
-            if (_isSubscribed) return;
-            _isSubscribed = true;
-        }
-
-        private void UnsubscribeEvents()
-        {
-            if (!_isSubscribed) return;
-            _isSubscribed = false;
-        }
-
-        public void OnSettingChanged(object sender, BepInEx.Configuration.SettingChangedEventArgs e)
-        {
-            string key = e.ChangedSetting.Definition.Key;
-
-            if (key == "UseHostConfig")
+            if (photonEvent.Code != REQUEST_EVENT_CODE) return;
+            if (photonEvent.CustomData is string content && content == REQUEST_CONTENT)
             {
                 bool useHost = SuperEnergyConfig.Instance.SyncUseHostConfig.Value;
-                SuperEnergy.Logger.LogInfo($"UseHostConfig 变更为：{useHost}");
-
-                if (useHost)
+                if (PhotonNetwork.IsMasterClient && _isLevelLoaded && useHost)
                 {
-                    if (_isLevelLoaded)
-                    {
-                        if (PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom)
-                        {
-                            if (PhotonNetwork.IsConnected && PhotonNetwork.InRoom)
-                            {
-                                EnsureSyncCacheCreated();
-                                PushCurrentConfigToCache();
-                                _pendingPush = false;
-                            }
-                            else
-                            {
-                                _pendingPush = true;
-                                SuperEnergy.Logger.LogInfo("网络未就绪，配置将在网络就绪后补发。");
-                            }
-                        }
-                    }
-                    else
-                    {
-                        SuperEnergy.Logger.LogInfo("尚未进入关卡，缓存将在关卡加载后创建。");
-                    }
+                    EnsureSyncCacheCreated();
+                    PushCurrentConfigToCache();
+                    SuperEnergy.Logger.LogInfo("响应客户端配置请求，已推送当前配置。");
                 }
-                else
-                {
-                    _syncConfigCache = null;
-                    _pendingPush = false;
-                }
-                return;
-            }
-
-            if (SuperEnergyConfig.Instance.SyncUseHostConfig.Value &&
-                _isLevelLoaded &&
-                (PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom) &&
-                PhotonNetwork.IsConnected && PhotonNetwork.InRoom)
-            {
-                PushCurrentConfigToCache();
             }
         }
 
+        // ---- 同步缓存管理 ----
         private void EnsureSyncCacheCreated()
         {
-            if (_syncConfigCache != null) return;
+            if (_syncCache != null) return;
 
-            _syncConfigCache = CacheManager.GetOrCreateSyncCache<string, RemoteStaminaConfig>(
-                REMOTE_CONFIG_CACHE_NAME,
+            _syncCache = CacheManager.GetOrCreateSyncCache<string, StaminaSyncConfig>(
+                SYNC_CACHE_NAME,
                 SyncMode.HostAuthority,
-                serialize: (BinaryWriter writer, RemoteStaminaConfig config) => config.Write(writer),
-                deserialize: (BinaryReader reader) => RemoteStaminaConfig.Read(reader)
+                serialize: (BinaryWriter w, StaminaSyncConfig c) => c.Write(w),
+                deserialize: (BinaryReader r) => StaminaSyncConfig.Read(r)
             );
-            _syncConfigCache.OnDataChanged += OnConfigChanged;
+            _syncCache.OnDataChanged += OnSyncDataChanged;
 
             SuperEnergy.Logger.LogInfo("同步缓存已创建。");
         }
 
         private void PushCurrentConfigToCache()
         {
-            if (_syncConfigCache == null) return;
+            if (_syncCache == null) return;
 
             SuperEnergyConfig config = SuperEnergyConfig.Instance;
             if (!config.StaminaBoostEnabled.Value) return;
 
-            RemoteStaminaConfig remoteConfig = new RemoteStaminaConfig(
+            StaminaSyncConfig syncConfig = new StaminaSyncConfig(
                 config.StaminaBoostPercent.Value,
                 config.StaminaBoostCompensateWhenDisabled.Value,
                 config.StaminaBoostEnableCrouchBoost.Value,
                 config.SlideBoostPercent.Value
             );
 
-            SuperEnergy.Logger.LogInfo($"房主推送配置到缓存：体力百分比={remoteConfig.Percent}, 补偿={remoteConfig.CompensateWhenDisabled}, 下蹲加成={remoteConfig.EnableCrouchBoost}, 滑铲倍率={remoteConfig.SlideBoostPercent}");
-            _syncConfigCache.Set(CONFIG_KEY, remoteConfig);
+            _syncCache.Set(SYNC_CACHE_KEY, syncConfig);
+            SuperEnergy.Logger.LogInfo($"房主推送配置：体力={syncConfig.Percent}%，滑铲={syncConfig.SlideBoostPercent}%");
         }
 
-        private void OnConfigChanged(string key, RemoteStaminaConfig config)
+        private void OnSyncDataChanged(string key, StaminaSyncConfig config)
         {
-            SuperEnergy.Logger.LogInfo($"收到房主配置更新：体力百分比={config.Percent}, 补偿={config.CompensateWhenDisabled}, 下蹲加成={config.EnableCrouchBoost}, 滑铲倍率={config.SlideBoostPercent}");
+            SuperEnergy.Logger.LogInfo($"收到房主配置更新：体力={config.Percent}%，滑铲={config.SlideBoostPercent}%");
+            _hasReceivedSyncData = true;
+            _isWaitingForSync = false;
+            _hasRequestedAndTimedOut = false;
         }
 
-        public static bool TryGetEffectiveConfig(out RemoteStaminaConfig? config)
+        // ---- 获取有效配置 ----
+        public StaminaSyncConfig GetEffectiveConfig()
         {
-            config = null;
-            SuperEnergyConfig cfg = SuperEnergyConfig.Instance;
-            bool useHost = cfg.SyncUseHostConfig.Value;
+            SuperEnergyConfig config = SuperEnergyConfig.Instance;
+            bool useHost = config.SyncUseHostConfig.Value;
+            bool isHost = PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom;
 
-            if (!useHost)
+            if (!useHost || isHost)
             {
-                config = new RemoteStaminaConfig(
-                    cfg.StaminaBoostPercent.Value,
-                    cfg.StaminaBoostCompensateWhenDisabled.Value,
-                    cfg.StaminaBoostEnableCrouchBoost.Value,
-                    cfg.SlideBoostPercent.Value
-                );
-                return true;
+                return BuildFromLocalConfig(config);
             }
 
-            ICacheProvider<string, RemoteStaminaConfig>? configCache =
-                CacheManager.GetCache<string, RemoteStaminaConfig>(REMOTE_CONFIG_CACHE_NAME);
-            if (configCache != null && configCache.TryGet(CONFIG_KEY, out RemoteStaminaConfig? remote))
+            // ---- 客户端启用同步 ----
+            if (_hasReceivedSyncData && _syncCache != null)
             {
-                config = remote;
-                return true;
+                if (_syncCache.TryGet(SYNC_CACHE_KEY, out StaminaSyncConfig? cached))
+                {
+                    return cached;
+                }
+                SuperEnergy.Logger.LogWarning("同步缓存丢失，降级到本地配置。");
+                return BuildFromLocalConfig(config);
             }
 
-            IGameStateBridge gameState = BridgeLocator.GameState;
-            if (gameState.IsMasterClientOrSingleplayer())
+            if (_hasRequestedAndTimedOut)
             {
-                config = new RemoteStaminaConfig(
-                    cfg.StaminaBoostPercent.Value,
-                    cfg.StaminaBoostCompensateWhenDisabled.Value,
-                    cfg.StaminaBoostEnableCrouchBoost.Value,
-                    cfg.SlideBoostPercent.Value
-                );
-                return true;
+                return BuildFromLocalConfig(config);
             }
 
-            return false;
+            if (!_isWaitingForSync)
+            {
+                _isWaitingForSync = true;
+                _syncWaitStartTime = Time.realtimeSinceStartup;
+                RequestConfigFromHost();
+                SuperEnergy.Logger.LogInfo("请求房主配置，等待响应...");
+                return BuildFromLocalConfig(config);
+            }
+
+            if (Time.realtimeSinceStartup - _syncWaitStartTime >= SYNC_TIMEOUT_SECONDS)
+            {
+                SuperEnergy.Logger.LogWarning($"超过 {SYNC_TIMEOUT_SECONDS} 秒未收到房主配置，降级到本地配置。");
+                _hasRequestedAndTimedOut = true;
+                _isWaitingForSync = false;
+                return BuildFromLocalConfig(config);
+            }
+
+            return BuildFromLocalConfig(config);
+        }
+
+        private StaminaSyncConfig BuildFromLocalConfig(SuperEnergyConfig config)
+        {
+            return new StaminaSyncConfig(
+                config.StaminaBoostPercent.Value,
+                config.StaminaBoostCompensateWhenDisabled.Value,
+                config.StaminaBoostEnableCrouchBoost.Value,
+                config.SlideBoostPercent.Value
+            );
+        }
+
+        // ---- 客户端请求逻辑 ----
+        private void RequestConfigFromHost()
+        {
+            if (!PhotonNetwork.IsConnected || !PhotonNetwork.InRoom) return;
+            if (PhotonNetwork.IsMasterClient) return;
+
+            RaiseEventOptions options = new RaiseEventOptions
+            {
+                Receivers = ReceiverGroup.MasterClient
+            };
+            PhotonNetwork.RaiseEvent(REQUEST_EVENT_CODE, REQUEST_CONTENT, options, SendOptions.SendReliable);
+            SuperEnergy.Logger.LogInfo("已向房主发送配置请求。");
+        }
+
+        // ---- 配置变更事件回调（由 SuperEnergy 订阅） ----
+        public void OnConfigSettingChanged(object sender, BepInEx.Configuration.SettingChangedEventArgs e)
+        {
+            string key = e.ChangedSetting.Definition.Key;
+
+            if (key == "SyncUseHostConfig")
+            {
+                bool newValue = SuperEnergyConfig.Instance.SyncUseHostConfig.Value;
+                SuperEnergy.Logger.LogInfo($"SyncUseHostConfig 变更为：{newValue}");
+
+                if (newValue)
+                {
+                    if (PhotonNetwork.IsConnected && PhotonNetwork.InRoom && _isLevelLoaded)
+                    {
+                        if (PhotonNetwork.IsMasterClient)
+                        {
+                            EnsureSyncCacheCreated();
+                            PushCurrentConfigToCache();
+                        }
+                        else
+                        {
+                            _hasReceivedSyncData = false;
+                            _isWaitingForSync = false;
+                            _hasRequestedAndTimedOut = false;
+                            EnsureSyncCacheCreated();
+                            RequestConfigFromHost();
+                        }
+                    }
+                }
+                else
+                {
+                    _isWaitingForSync = false;
+                    _hasReceivedSyncData = false;
+                    _hasRequestedAndTimedOut = false;
+                }
+                return;
+            }
+
+            // 其他配置变更：如果是房主且同步开启，则推送
+            bool useHost = SuperEnergyConfig.Instance.SyncUseHostConfig.Value;
+            if (useHost && PhotonNetwork.IsMasterClient && _isLevelLoaded && PhotonNetwork.InRoom)
+            {
+                EnsureSyncCacheCreated();
+                PushCurrentConfigToCache();
+            }
+        }
+
+        // ---- 旧签名兼容 ----
+        [Obsolete("请使用 Instance.GetEffectiveConfig()")]
+        public static bool TryGetEffectiveConfig(out StaminaSyncConfig? config)
+        {
+            config = Instance.GetEffectiveConfig();
+            return true;
+        }
+
+        public void Shutdown()
+        {
+            // 清理由 OnDestroy 处理
         }
     }
 }

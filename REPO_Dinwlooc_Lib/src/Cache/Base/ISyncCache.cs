@@ -1,10 +1,15 @@
 ﻿using System;
+using Dinwlooc.Common.Caching;
 using PhotonHashtable = ExitGames.Client.Photon.Hashtable;
 
 namespace Dinwlooc.Common.Sync
 {
+    /// <summary>
+    /// 非泛型同步缓存接口，仅包含同步特有操作，不包含缓存读写方法。
+    /// </summary>
     public interface ISyncCache
     {
+        string CacheName { get; }
         SyncMode Mode { get; }
         bool UseBinarySerialization { get; }
 
@@ -15,20 +20,17 @@ namespace Dinwlooc.Common.Sync
         void ProcessMergeObject(object key, object value);
         void ProcessMergeBinary(object key, byte[] data);
         void SyncNow();
-
-        /// <summary>
-        /// 获取当前缓存的全量快照，用于网络同步。
-        /// </summary>
         PhotonHashtable GetSnapshot();
     }
 
-    public interface ISyncCache<TKey, TValue> : ISyncCache where TKey : notnull
+    /// <summary>
+    /// 泛型同步缓存接口，继承标准缓存接口 <see cref="ICacheProvider{TKey,TValue}"/> 和非泛型 <see cref="ISyncCache"/>。
+    /// </summary>
+    public interface ISyncCache<TKey, TValue> : ICacheProvider<TKey, TValue>, ISyncCache
+        where TKey : notnull
     {
         event Action<TKey, TValue> OnDataChanged;
-        bool TryGet(TKey key, out TValue value);
-        void Set(TKey key, TValue value, TimeSpan? expiration = null);
-        bool Remove(TKey key);
-        void Clear();
-        void Refresh(TKey key);
+        event Action<TKey> OnDataRemoved;
+        event Action OnDataCleared;
     }
 }

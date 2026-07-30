@@ -1,15 +1,12 @@
-﻿// 文件：Dinwlooc.Common/Sync/SyncManager.cs
-using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
+﻿using System;
 using System.IO;
-using System.Linq;
+using Dinwlooc.Common.Core;
+using Dinwlooc.Common.Caching;
+using Dinwlooc.Common.Events;
 using Photon.Pun;
 using Photon.Realtime;
 using UnityEngine;
 using PhotonHashtable = ExitGames.Client.Photon.Hashtable;
-using Dinwlooc.Common.Events;
-using Dinwlooc.Common.Core;
 
 namespace Dinwlooc.Common.Sync
 {
@@ -38,7 +35,6 @@ namespace Dinwlooc.Common.Sync
             }
         }
 
-        internal readonly ConcurrentDictionary<string, ISyncCache> SyncCaches = new ConcurrentDictionary<string, ISyncCache>();
         private bool _isNetworkReady = false;
         private const string LOG_TAG = "[SyncManager]";
 
@@ -58,17 +54,15 @@ namespace Dinwlooc.Common.Sync
             SyncMode mode,
             Func<TValue, TValue, TValue>? mergeFunc = null,
             Action<BinaryWriter, TValue>? serialize = null,
-            Func<BinaryReader, TValue>? deserialize = null) where TKey : notnull
+            Func<BinaryReader, TValue>? deserialize = null)
+            where TKey : notnull
         {
-            if (SyncCaches.TryGetValue(cacheName, out ISyncCache existing))
-            {
-                if (existing is SyncCache<TKey, TValue> typed)
-                    return typed;
-                throw new InvalidOperationException($"缓存 '{cacheName}' 已存在但类型不匹配。");
-            }
+            // 先尝试从 CacheManager 获取（避免重复创建）
+            ICacheProvider<TKey, TValue>? existing = CacheManager.GetCache<TKey, TValue>(cacheName);
+            if (existing is ISyncCache<TKey, TValue> typed)
+                return typed;
 
             var newCache = new SyncCache<TKey, TValue>(cacheName, mode, mergeFunc, serialize, deserialize);
-            SyncCaches[cacheName] = newCache;
 
             newCache.OnDataChanged += (key, value) =>
             {
@@ -127,11 +121,6 @@ namespace Dinwlooc.Common.Sync
             return newCache;
         }
 
-        public bool TryGetCache(string cacheName, out ISyncCache cache)
-        {
-            return SyncCaches.TryGetValue(cacheName, out cache);
-        }
-
         // ---- Photon 回调 ----
         public override void OnJoinedRoom()
         {
@@ -139,15 +128,12 @@ namespace Dinwlooc.Common.Sync
             _isNetworkReady = true;
             Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 已加入房间，网络就绪。");
 
+            // 如果是主机，立即将现有缓存广播给已在房间的其他玩家
             if (PhotonNetwork.IsMasterClient)
             {
-                Player? newPlayer = PhotonNetwork.CurrentRoom.Players.Values
-                    .FirstOrDefault(p => p.ActorNumber != PhotonNetwork.LocalPlayer.ActorNumber && !p.IsInactive);
-                if (newPlayer != null)
-                    SendAllCachesToPlayer(newPlayer);
+                BroadcastAllCachesToAll();
             }
 
-            // 发布网络就绪事件
             EventBus.Publish(new NetworkReadyEvent());
         }
 
@@ -177,60 +163,86 @@ namespace Dinwlooc.Common.Sync
             }
         }
 
+        public override void OnPlayerEnteredRoom(Player newPlayer)
+        {
+            if (PhotonNetwork.IsMasterClient && _isNetworkReady)
+            {
+                Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 新玩家 {newPlayer.ActorNumber} 加入，发送全量缓存。");
+                SendAllCachesToPlayer(newPlayer);
+            }
+        }
+
         // ---- 快照推送 ----
         private void SendAllCachesToPlayer(Player targetPlayer)
         {
-            foreach (var kv in SyncCaches)
+            ISyncCache[] allCaches = CacheManager.GetAllSyncCaches();
+            foreach (ISyncCache cache in allCaches)
             {
-                var snapshot = kv.Value.GetSnapshot();
+                PhotonHashtable snapshot = cache.GetSnapshot();
                 if (snapshot.Count == 0) continue;
-                SyncRpcModule.SendFullSnapshotToPlayer(kv.Key, snapshot, targetPlayer.ActorNumber);
+                SyncRpcModule.SendFullSnapshotToPlayer(cache.CacheName, snapshot, targetPlayer.ActorNumber);
             }
             Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 已向玩家 {targetPlayer.ActorNumber} 发送所有缓存快照。");
         }
 
         private void BroadcastAllCachesToAll()
         {
-            foreach (var kv in SyncCaches)
+            ISyncCache[] allCaches = CacheManager.GetAllSyncCaches();
+            foreach (ISyncCache cache in allCaches)
             {
-                var snapshot = kv.Value.GetSnapshot();
+                PhotonHashtable snapshot = cache.GetSnapshot();
                 if (snapshot.Count == 0) continue;
-                SyncRpcModule.BroadcastFullSnapshot(kv.Key, snapshot);
+                SyncRpcModule.BroadcastFullSnapshot(cache.CacheName, snapshot);
             }
             Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 已广播所有缓存快照给所有客户端。");
         }
 
-        // ---- 远程操作入口 ----
+        // ---- 远程操作入口（供 SyncRpcModule 调用） ----
         internal void ApplyRemoteSet(string cacheName, object key, object value)
         {
-            if (SyncCaches.TryGetValue(cacheName, out var cache)) cache.ApplyRemoteSetObject(key, value);
+            ISyncCache? cache = FindCacheByName(cacheName);
+            cache?.ApplyRemoteSetObject(key, value);
         }
 
         internal void ApplyRemoteSetBinary(string cacheName, object key, byte[] data)
         {
-            if (SyncCaches.TryGetValue(cacheName, out var cache)) cache.ApplyRemoteSetBinary(key, data);
+            ISyncCache? cache = FindCacheByName(cacheName);
+            cache?.ApplyRemoteSetBinary(key, data);
         }
 
         internal void ApplyRemoteRemove(string cacheName, object key)
         {
-            if (SyncCaches.TryGetValue(cacheName, out var cache)) cache.ApplyRemoteRemove(key);
+            ISyncCache? cache = FindCacheByName(cacheName);
+            cache?.ApplyRemoteRemove(key);
         }
 
         internal void ApplyRemoteClear(string cacheName)
         {
-            if (SyncCaches.TryGetValue(cacheName, out var cache)) cache.ApplyRemoteClear();
+            ISyncCache? cache = FindCacheByName(cacheName);
+            cache?.ApplyRemoteClear();
         }
 
         internal void ApplyMergeRequest(string cacheName, object key, object value)
         {
-            if (SyncCaches.TryGetValue(cacheName, out var cache)) cache.ProcessMergeObject(key, value);
+            ISyncCache? cache = FindCacheByName(cacheName);
+            cache?.ProcessMergeObject(key, value);
         }
 
         internal void ApplyMergeRequestBinary(string cacheName, object key, byte[] data)
         {
-            if (SyncCaches.TryGetValue(cacheName, out var cache)) cache.ProcessMergeBinary(key, data);
+            ISyncCache? cache = FindCacheByName(cacheName);
+            cache?.ProcessMergeBinary(key, data);
         }
 
-        public string[] GetAllCacheNames() => SyncCaches.Keys.ToArray();
+        /// <summary>
+        /// 根据缓存名称查找同步缓存（内部使用）。
+        /// </summary>
+        internal ISyncCache? FindCacheByName(string cacheName)
+        {
+            if (CacheManager.TryGetSyncCache(cacheName, out ISyncCache? cache))
+                return cache;
+            return null;
+        }
     }
+
 }
