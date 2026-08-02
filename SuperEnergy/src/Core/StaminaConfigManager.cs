@@ -1,6 +1,8 @@
 ﻿using System;
 using System.IO;
 using Dinwlooc.Common.Caching;
+using Dinwlooc.Common.Core;
+using Dinwlooc.Common.Events;
 using Dinwlooc.Common.Networking;
 using Dinwlooc.Common.Sync;
 using Photon.Pun;
@@ -9,9 +11,6 @@ using UnityEngine.SceneManagement;
 
 namespace SuperEnergy
 {
-    /// <summary>
-    /// 配置管理器：管理同步缓存，提供配置获取，支持客户端请求和超时降级。
-    /// </summary>
     public class StaminaConfigManager : NetworkBehaviour
     {
         private static StaminaConfigManager? _instance;
@@ -56,25 +55,26 @@ namespace SuperEnergy
 
             _localVersion = 0;
             _hasPushedForRoom = false;
-            SceneManager.sceneLoaded += OnSceneLoaded;
+
+            // 显式激活 SceneEventGenerator，确保场景事件发布
+            _ = SceneEventGenerator.Instance;
+
+            // 订阅场景变化事件
+            EventBus.Subscribe<SceneChangedEvent>(OnSceneChanged);
             SuperEnergy.Logger.LogInfo("配置管理器已初始化。");
         }
 
         protected override void OnDestroy()
         {
-            SceneManager.sceneLoaded -= OnSceneLoaded;
+            EventBus.Unsubscribe<SceneChangedEvent>(OnSceneChanged);
             base.OnDestroy();
             _syncCache = null;
         }
-
-        private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+        private void OnSceneChanged(SceneChangedEvent evt)
         {
-            // 仅当为关卡场景时执行同步相关操作
-            if (!SemiFunc.RunIsLevel())
+            // 仅在关卡场景处理
+            if (evt.Type != SceneType.Level)
                 return;
-
-            SuperEnergy.Logger.LogInfo($"关卡加载：{scene.name}");
-
             if (PhotonNetwork.IsConnected && PhotonNetwork.InRoom)
             {
                 bool useHost = SuperEnergyConfig.Instance.SyncUseHostConfig.Value;
@@ -89,10 +89,14 @@ namespace SuperEnergy
                 else if (useHost && !PhotonNetwork.IsMasterClient)
                 {
                     EnsureSyncCacheCreated();
-                    _hasReceivedSyncData = false;
-                    _isWaitingForSync = false;
-                    _hasRequestedAndTimedOut = false;
-                    RequestConfigFromHost();
+                    if (!_isWaitingForSync && !_hasReceivedSyncData)
+                    {
+                        RequestConfigFromHost();
+                    }
+                    else
+                    {
+                        SuperEnergy.Logger.LogInfo($"客户端已处于等待（{_isWaitingForSync}）或已收到数据（{_hasReceivedSyncData}），跳过请求。");
+                    }
                 }
             }
             else
@@ -103,7 +107,6 @@ namespace SuperEnergy
 
         protected override void OnNetworkReady()
         {
-            // 网络就绪时，若当前在关卡中则执行同步逻辑
             if (!SemiFunc.RunIsLevel())
                 return;
 
@@ -119,10 +122,14 @@ namespace SuperEnergy
             else if (useHost && !PhotonNetwork.IsMasterClient)
             {
                 EnsureSyncCacheCreated();
-                _hasReceivedSyncData = false;
-                _isWaitingForSync = false;
-                _hasRequestedAndTimedOut = false;
-                RequestConfigFromHost();
+                if (!_isWaitingForSync && !_hasReceivedSyncData)
+                {
+                    RequestConfigFromHost();
+                }
+                else
+                {
+                    SuperEnergy.Logger.LogInfo($"客户端已处于等待或已收到数据，跳过请求。");
+                }
             }
         }
 
@@ -145,12 +152,24 @@ namespace SuperEnergy
         {
             if (_syncCache != null) return;
 
+            // 复用已有缓存
+            var existing = CacheManager.GetCache<string, StaminaSyncConfig>(SYNC_CACHE_NAME);
+            if (existing != null)
+            {
+                _syncCache = (ISyncCache<string, StaminaSyncConfig>)existing;
+                _localVersion = Convert.ToInt32(_syncCache.Version ?? 0);
+                _syncCache.OnDataChanged += OnSyncDataChanged; // 重订阅
+                SuperEnergy.Logger.LogInfo($"同步缓存已存在，版本 {_localVersion}。");
+                return;
+            }
+
+            // 创建新缓存
             _syncCache = CacheManager.GetOrCreateSyncCache<string, StaminaSyncConfig>(
                 SYNC_CACHE_NAME,
                 SyncMode.HostAuthority,
                 serialize: (BinaryWriter w, StaminaSyncConfig c) => c.Write(w),
                 deserialize: (BinaryReader r) => StaminaSyncConfig.Read(r)
-                );
+            );
             _syncCache.OnDataChanged += OnSyncDataChanged;
 
             _localVersion = Convert.ToInt32(_syncCache.Version ?? 0);
@@ -340,9 +359,5 @@ namespace SuperEnergy
             return true;
         }
 
-        public void Shutdown()
-        {
-            // 由 OnDestroy 处理
-        }
     }
 }

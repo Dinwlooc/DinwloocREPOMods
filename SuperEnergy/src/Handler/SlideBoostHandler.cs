@@ -1,13 +1,14 @@
-﻿using Dinwlooc.Common.Bridge;
-using Dinwlooc.Common.IBridge;
+﻿using Dinwlooc.Common.Core;
+using Dinwlooc.Common.Events;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
 namespace SuperEnergy
 {
     /// <summary>
-    /// 滑铲效能加速处理器：延长滑铲持续时间，同时等比例降低速度衰减系数，
-    /// 保证滑铲总路程不变，避免反向加速。
+    /// 滑铲效能加速处理器：依赖库事件驱动，
+    /// 仅在关卡场景（SceneType.Level）中生效，
+    /// 日志仅在百分比变化时输出一次。
     /// </summary>
     public class SlideBoostHandler : IEnergyHandler
     {
@@ -16,27 +17,36 @@ namespace SuperEnergy
         private const float MIN_SLIDE_TIME = 0.05f;
         private const float MIN_SLIDE_DECAY = 0.001f;
 
-        private int _lastAppliedPercent = -1;
-        private bool _isSubscribed = false;
+        private int _lastLoggedPercent = -1;
+        private bool _needApply = false;
 
         public SlideBoostHandler()
         {
-            SceneManager.sceneLoaded += OnSceneLoaded;
-            _isSubscribed = true;
+            // 改用依赖库的包装事件
+            EventBus.Subscribe<SceneChangedEvent>(OnSceneChanged);
         }
 
-        private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+        private void OnSceneChanged(SceneChangedEvent evt)
         {
-            if (SemiFunc.RunIsLevel())
+            if (evt.Type == SceneType.Level)
             {
-                _lastAppliedPercent = -1;
-                SuperEnergy.Logger.LogInfo($"滑铲配置：场景 {scene.name} 加载，重置应用状态");
+                _needApply = true;
+                SuperEnergy.Logger.LogInfo($"滑铲配置：场景 {evt.SceneName} (Level) 加载，准备应用");
             }
         }
 
         public void Process(bool isHost, float deltaTime)
         {
+            // 仅在需要应用时执行，避免每帧处理
+            if (!_needApply)
+                return;
+
+            // 双重检查：确保当前确实是关卡场景
             if (!SemiFunc.RunIsLevel())
+                return;
+
+            Scene activeScene = SceneManager.GetActiveScene();
+            if (SceneEventGenerator.DetermineSceneType(activeScene) != SceneType.Level)
                 return;
 
             PlayerController ctrl = PlayerController.instance;
@@ -45,40 +55,46 @@ namespace SuperEnergy
 
             SuperEnergyConfig config = SuperEnergyConfig.Instance;
             if (!config.SlideBoostEnabled.Value)
+            {
+                _needApply = false;
                 return;
+            }
 
             StaminaSyncConfig syncConfig = StaminaConfigManager.Instance.GetEffectiveConfig();
             if (syncConfig == null)
+            {
+                _needApply = false;
                 return;
+            }
 
             int percent = syncConfig.SlideBoostPercent;
-            if (_lastAppliedPercent == percent)
-                return;
 
             float factor = 1f + percent / 100f;
             factor = Mathf.Max(0.01f, factor);
+            float targetTime = Mathf.Max(MIN_SLIDE_TIME, DEFAULT_SLIDE_TIME * factor);
+            float targetDecay = Mathf.Max(MIN_SLIDE_DECAY, DEFAULT_SLIDE_DECAY / factor);
 
-            float newTime = DEFAULT_SLIDE_TIME * factor;
-            ctrl.SlideTime = Mathf.Max(MIN_SLIDE_TIME, newTime);
+            // 应用滑铲参数
+            ctrl.SlideTime = targetTime;
+            ctrl.SlideDecay = targetDecay;
 
-            float newDecay = DEFAULT_SLIDE_DECAY / factor;
-            ctrl.SlideDecay = Mathf.Max(MIN_SLIDE_DECAY, newDecay);
+            // 日志：仅在百分比变化时输出，确保不重复
+            if (_lastLoggedPercent != percent)
+            {
+                _lastLoggedPercent = percent;
+                SuperEnergy.Logger.LogInfo(
+                    $"滑铲效能倍率应用：百分比={percent}%，" +
+                    $"滑铲时间={ctrl.SlideTime:F2}秒，衰减系数={ctrl.SlideDecay:F3}"
+                );
+            }
 
-            _lastAppliedPercent = percent;
-
-            SuperEnergy.Logger.LogInfo(
-                $"滑铲效能倍率应用：百分比={percent}%，" +
-                $"滑铲时间={ctrl.SlideTime:F2}秒，衰减系数={ctrl.SlideDecay:F3}"
-            );
+            // 标记已应用，本关卡内不再重复处理
+            _needApply = false;
         }
 
         public void Unsubscribe()
         {
-            if (_isSubscribed)
-            {
-                SceneManager.sceneLoaded -= OnSceneLoaded;
-                _isSubscribed = false;
-            }
+            EventBus.Unsubscribe<SceneChangedEvent>(OnSceneChanged);
         }
     }
 }

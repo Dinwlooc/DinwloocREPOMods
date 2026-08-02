@@ -28,7 +28,17 @@ namespace MonsterCombatGroup
 
             Logger.LogInfo($"{PluginInfo.PLUGIN_GUID} v{PluginInfo.PLUGIN_VERSION} loaded.");
         }
+        private void Start()
+        {
+            // 激活场景事件生成器（确保发布 SceneChangedEvent）
+            SceneEventGenerator.Activate();
 
+            if (_service == null)
+            {
+                _service = gameObject.AddComponent<MonsterCombatService>();
+                Logger.LogInfo("MonsterCombatService created.");
+            }
+        }
         private void RegisterTranslations()
         {
             var translations = new Dictionary<string, string>
@@ -54,14 +64,6 @@ namespace MonsterCombatGroup
             );
         }
 
-        private void Start()
-        {
-            if (_service == null)
-            {
-                _service = gameObject.AddComponent<MonsterCombatService>();
-                Logger.LogInfo("MonsterCombatService created.");
-            }
-        }
 
         private void OnDestroy()
         {

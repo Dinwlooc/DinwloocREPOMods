@@ -50,21 +50,20 @@ namespace Dinwlooc.Common.Sync
             _instance = this;
             DontDestroyOnLoad(gameObject);
 
-            // 注意：不再订阅 CustomRequestEvent/CustomResponseEvent，
-            // 因为这些事件现在由 SyncRpcModule 直接调用 HandleRpcOperation 处理。
-            // 保留其他事件订阅（如有需要）
+            // 订阅场景变化事件（用于广播缓存）
             EventBus.Subscribe<SceneChangedEvent>(OnSceneChanged);
-
+            // 订阅自定义请求事件（房主处理客户端请求）
+            EventBus.Subscribe<CustomRequestEvent>(OnCustomRequestReceived);
+            // 订阅自定义响应事件（客户端可接收响应，但本模组不直接处理）
+            EventBus.Subscribe<CustomResponseEvent>(OnCustomResponseReceived);
             _ = SceneEventGenerator.Instance;
-
-            TryInitializeState();
-            TryBroadcastIfNeeded();
         }
 
         private void OnDestroy()
         {
             EventBus.Unsubscribe<SceneChangedEvent>(OnSceneChanged);
-            // 其他清理
+            EventBus.Unsubscribe<CustomRequestEvent>(OnCustomRequestReceived);
+            EventBus.Unsubscribe<CustomResponseEvent>(OnCustomResponseReceived);
         }
 
         private void TryInitializeState()
@@ -85,109 +84,32 @@ namespace Dinwlooc.Common.Sync
         {
             if (!_isNetworkReady)
             {
-                Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 网络未就绪，跳过广播尝试。");
+                // Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 网络未就绪，跳过广播尝试。");
                 return;
             }
 
             if (!PhotonNetwork.IsMasterClient)
             {
-                Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 非房主，跳过广播尝试。");
+                // Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 非房主，跳过广播尝试。");
                 return;
             }
 
             if (_hasBroadcastedForRoom)
             {
-                Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 当前房间已广播过，跳过。");
+                // Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 当前房间已广播过，跳过。");
                 return;
             }
-
             Scene currentScene = SceneManager.GetActiveScene();
             SceneType type = SceneEventGenerator.DetermineSceneType(currentScene);
             if (type == SceneType.MainMenu || type == SceneType.Unknown)
             {
-                Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 当前场景 {currentScene.name} 非有效游戏场景，跳过广播。");
                 return;
             }
-
             BroadcastAllCachesToAll();
             _hasBroadcastedForRoom = true;
             Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 首次进入有效场景 {currentScene.name}，已广播所有缓存。");
         }
 
-        // ---------- 缓存创建 ----------
-        public ISyncCache<TKey, TValue> GetOrCreateSyncCache<TKey, TValue>(
-            string cacheName,
-            SyncMode mode,
-            Func<TValue, TValue, TValue>? mergeFunc = null,
-            Action<BinaryWriter, TValue>? serialize = null,
-            Func<BinaryReader, TValue>? deserialize = null,
-            bool allowFullUpdateRequest = true)
-            where TKey : notnull
-        {
-            ICacheProvider<TKey, TValue>? existing = CacheManager.GetCache<TKey, TValue>(cacheName);
-            if (existing is ISyncCache<TKey, TValue> typed)
-                return typed;
-
-            SyncCache<TKey, TValue> newCache = new SyncCache<TKey, TValue>(
-                cacheName, mode, mergeFunc, serialize, deserialize, allowFullUpdateRequest);
-
-            // 事件绑定（广播逻辑）
-            newCache.OnDataChanged += (key, value) =>
-            {
-                if (!_isNetworkReady) return;
-
-                bool isHost = PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom;
-                bool canBroadcast = isHost || (mode == SyncMode.ClientSnapshot) || (mode == SyncMode.Merge);
-                if (!canBroadcast) return;
-
-                if (isHost && (mode == SyncMode.HostAuthority || mode == SyncMode.Merge))
-                {
-                    if (newCache.UseBinarySerialization)
-                    {
-                        byte[] data = newCache.SerializeToBinary(value);
-                        SyncRpcModule.BroadcastDataBinary<TKey>(cacheName, key, data);
-                    }
-                    else
-                    {
-                        object data = newCache.SerializeToObject(value);
-                        SyncRpcModule.BroadcastData<TKey, object>(cacheName, key, data);
-                    }
-                }
-                else if (mode == SyncMode.ClientSnapshot && !isHost)
-                {
-                    if (newCache.UseBinarySerialization)
-                        SyncRpcModule.SendSnapshotBinary<TKey>(cacheName, key, newCache.SerializeToBinary(value));
-                    else
-                        SyncRpcModule.SendSnapshot<TKey, object>(cacheName, key, newCache.SerializeToObject(value));
-                }
-                else if (mode == SyncMode.Merge && !isHost)
-                {
-                    if (newCache.UseBinarySerialization)
-                        SyncRpcModule.SendMergeRequestBinary<TKey>(cacheName, key, newCache.SerializeToBinary(value));
-                    else
-                        SyncRpcModule.SendMergeRequest<TKey, object>(cacheName, key, newCache.SerializeToObject(value));
-                }
-            };
-
-            newCache.OnDataRemoved += (key) =>
-            {
-                if (!_isNetworkReady) return;
-                bool isHost = PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom;
-                if (isHost && (mode == SyncMode.HostAuthority || mode == SyncMode.Merge))
-                    SyncRpcModule.BroadcastRemove<TKey>(cacheName, key);
-            };
-
-            newCache.OnDataCleared += () =>
-            {
-                if (!_isNetworkReady) return;
-                bool isHost = PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom;
-                if (isHost && (mode == SyncMode.HostAuthority || mode == SyncMode.Merge))
-                    SyncRpcModule.BroadcastClear(cacheName);
-            };
-
-            Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 缓存 '{cacheName}' 已创建（模式：{mode}，二进制序列化：{newCache.UseBinarySerialization}，允许请求：{allowFullUpdateRequest}）。");
-            return newCache;
-        }
 
         // ---------- Photon 回调 ----------
         public override void OnJoinedRoom()
@@ -259,6 +181,109 @@ namespace Dinwlooc.Common.Sync
         private void OnSceneChanged(SceneChangedEvent evt)
         {
             TryBroadcastIfNeeded();
+        }
+
+        // ---------- 自定义请求/响应处理 ----------
+        private void OnCustomRequestReceived(CustomRequestEvent evt)
+        {
+            // 仅房主处理请求
+            if (!PhotonNetwork.IsMasterClient)
+                return;
+
+            if (evt.Data is not PhotonHashtable data)
+                return;
+
+            if (!data.ContainsKey("type"))
+                return;
+
+            string type = (string)data["type"];
+            if (type != "SyncCacheFullUpdateRequest")
+                return;
+
+            string cacheName = (string)data["cacheName"];
+            object? requestVersion = data.ContainsKey("version") ? data["version"] : null;
+
+            ISyncCache? cache = FindCacheByName(cacheName);
+            if (cache == null)
+            {
+                Core.CommonPlugin.Logger.LogWarning($"收到未知缓存 '{cacheName}' 的全量更新请求，忽略。");
+                return;
+            }
+
+            object? currentVersion = cache.Version;
+            if (currentVersion != null && requestVersion != null && currentVersion.Equals(requestVersion))
+            {
+                Core.CommonPlugin.Logger.LogInfo($"缓存 '{cacheName}' 版本一致（{requestVersion}），无需响应。");
+                return;
+            }
+
+            PhotonHashtable response = new PhotonHashtable
+            {
+                ["type"] = "SyncCacheFullUpdateResponse",
+                ["cacheName"] = cacheName,
+                ["version"] = currentVersion ?? 0
+            };
+
+            // 根据序列化策略发送快照
+            if (cache.UseBinarySerialization && cache.TryGetSnapshotBinary(out Dictionary<object, byte[]> binarySnapshot))
+            {
+                response["binarySnapshot"] = binarySnapshot;
+                Core.CommonPlugin.Logger.LogInfo($"向 Actor {evt.SenderActor} 发送二进制快照（缓存：{cacheName}，版本 {currentVersion ?? 0}）。");
+            }
+            else
+            {
+                PhotonHashtable snapshot = cache.GetSnapshot();
+                if (snapshot.Count == 0)
+                {
+                    Core.CommonPlugin.Logger.LogInfo($"缓存 '{cacheName}' 快照为空，不发送响应。");
+                    return;
+                }
+                response["snapshot"] = snapshot;
+                Core.CommonPlugin.Logger.LogInfo($"向 Actor {evt.SenderActor} 发送快照（缓存：{cacheName}，版本 {currentVersion ?? 0}）。");
+            }
+
+            SyncRpcModule.SendCustomResponse(evt.SenderActor, response);
+        }
+
+        // 客户端收到响应的处理（通常不需要，但保留以防扩展）
+        private void OnCustomResponseReceived(CustomResponseEvent evt)
+        {
+            if (evt.Data is not PhotonHashtable data)
+                return;
+
+            if (!data.ContainsKey("type"))
+                return;
+
+            string type = (string)data["type"];
+            if (type != "SyncCacheFullUpdateResponse")
+                return;
+
+            string cacheName = (string)data["cacheName"];
+            object? newVersion = data.ContainsKey("version") ? data["version"] : null;
+
+            ISyncCache? cache = FindCacheByName(cacheName);
+            if (cache == null)
+            {
+                Core.CommonPlugin.Logger.LogWarning($"收到未知缓存 '{cacheName}' 的响应，忽略。");
+                return;
+            }
+
+            if (data.ContainsKey("binarySnapshot") && data["binarySnapshot"] is Dictionary<object, byte[]> binarySnapshot)
+            {
+                cache.ApplyRemoteClear();
+                foreach (var kv in binarySnapshot)
+                    cache.ApplyRemoteSetBinary(kv.Key, kv.Value);
+                cache.Version = newVersion;
+                Core.CommonPlugin.Logger.LogInfo($"已应用缓存 '{cacheName}' 的二进制全量快照，版本更新为 {newVersion ?? 0}。");
+            }
+            else if (data["snapshot"] is PhotonHashtable snapshot)
+            {
+                cache.ApplyRemoteClear();
+                foreach (object key in snapshot.Keys)
+                    cache.ApplyRemoteSetObject(key, snapshot[key]);
+                cache.Version = newVersion;
+                Core.CommonPlugin.Logger.LogInfo($"已应用缓存 '{cacheName}' 的全量快照，版本更新为 {newVersion ?? 0}。");
+            }
         }
 
         // ---------- 快照广播 ----------
@@ -344,7 +369,7 @@ namespace Dinwlooc.Common.Sync
             return null;
         }
 
-        // ---------- 新增：统一处理 RPC 操作（由 SyncRpcModule 调用） ----------
+        // ---------- 统一处理 RPC 操作（由 SyncRpcModule 调用） ----------
         internal void HandleRpcOperation(RpcMessage.SubOpCode op, string cacheName, object? key, object? value, int senderActor)
         {
             switch (op)
@@ -367,42 +392,35 @@ namespace Dinwlooc.Common.Sync
                 case RpcMessage.SubOpCode.ApplyFullSnapshotBinary:
                     ApplyFullSnapshotBinary(cacheName, (Dictionary<object, byte[]>)value!);
                     break;
-
-                // 客户端发送给房主的快照/合并请求：房主直接应用（或合并）
                 case RpcMessage.SubOpCode.ReceiveSnapshot:
                 case RpcMessage.SubOpCode.ReceiveMergeRequest:
-                    // 根据模式，房主可能直接覆盖或合并，此处简单应用 Set（原逻辑如此）
                     ApplyRemoteSet(cacheName, key!, value!);
                     break;
                 case RpcMessage.SubOpCode.ReceiveSnapshotBinary:
                 case RpcMessage.SubOpCode.ReceiveMergeRequestBinary:
                     ApplyRemoteSetBinary(cacheName, key!, (byte[])value!);
                     break;
-
                 case RpcMessage.SubOpCode.ReceiveFullSnapshot:
                     ApplyFullSnapshot(cacheName, (PhotonHashtable)value!);
                     break;
                 case RpcMessage.SubOpCode.ReceiveFullSnapshotBinary:
                     ApplyFullSnapshotBinary(cacheName, (Dictionary<object, byte[]>)value!);
                     break;
-
                 case RpcMessage.SubOpCode.CustomRequest:
                 case RpcMessage.SubOpCode.CustomRequestBinary:
+                    // 通过事件发布，由 OnCustomRequestReceived 处理
                     EventBus.Publish(new CustomRequestEvent(value!, senderActor));
                     break;
-
                 case RpcMessage.SubOpCode.CustomResponse:
                 case RpcMessage.SubOpCode.CustomResponseBinary:
                     EventBus.Publish(new CustomResponseEvent(value!));
                     break;
-
                 default:
                     Core.CommonPlugin.Logger.LogWarning($"{LOG_TAG} 未知 RPC 操作: {op}");
                     break;
             }
         }
 
-        // 辅助方法：应用全量快照
         private void ApplyFullSnapshot(string cacheName, PhotonHashtable snapshot)
         {
             ISyncCache? cache = FindCacheByName(cacheName);
@@ -420,10 +438,74 @@ namespace Dinwlooc.Common.Sync
             foreach (var kv in snapshot)
                 cache.ApplyRemoteSetBinary(kv.Key, kv.Value);
         }
+        internal ISyncCache<TKey, TValue> CreateSyncCache<TKey, TValue>(
+            string cacheName,
+            SyncMode mode,
+            Func<TValue, TValue, TValue>? mergeFunc = null,
+            Action<BinaryWriter, TValue>? serialize = null,
+            Func<BinaryReader, TValue>? deserialize = null,
+            bool allowFullUpdateRequest = true)
+            where TKey : notnull
+        {
+            SyncCache<TKey, TValue> newCache = new SyncCache<TKey, TValue>(
+                cacheName, mode, mergeFunc, serialize, deserialize, allowFullUpdateRequest);
 
-        // ---------- 旧版全量请求响应处理（已废弃，但保留以防万一） ----------
-        // 注意：原 OnCustomRequestReceived 和 OnCustomResponseReceived 已移除，
-        // 因为现在由 SyncRpcModule 的 OnEventReceived 直接调用 HandleRpcOperation 处理。
-        // 如果你还需要处理自定义请求/响应，可通过 EventBus 订阅 CustomRequestEvent 等。
+            // 事件绑定
+            newCache.OnDataChanged += (key, value) =>
+            {
+                if (!_isNetworkReady) return;
+
+                bool isHost = PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom;
+                bool canBroadcast = isHost || (mode == SyncMode.ClientSnapshot) || (mode == SyncMode.Merge);
+                if (!canBroadcast) return;
+
+                if (isHost && (mode == SyncMode.HostAuthority || mode == SyncMode.Merge))
+                {
+                    if (newCache.UseBinarySerialization)
+                    {
+                        byte[] data = newCache.SerializeToBinary(value);
+                        SyncRpcModule.BroadcastDataBinary<TKey>(cacheName, key, data);
+                    }
+                    else
+                    {
+                        object data = newCache.SerializeToObject(value);
+                        SyncRpcModule.BroadcastData<TKey, object>(cacheName, key, data);
+                    }
+                }
+                else if (mode == SyncMode.ClientSnapshot && !isHost)
+                {
+                    if (newCache.UseBinarySerialization)
+                        SyncRpcModule.SendSnapshotBinary<TKey>(cacheName, key, newCache.SerializeToBinary(value));
+                    else
+                        SyncRpcModule.SendSnapshot<TKey, object>(cacheName, key, newCache.SerializeToObject(value));
+                }
+                else if (mode == SyncMode.Merge && !isHost)
+                {
+                    if (newCache.UseBinarySerialization)
+                        SyncRpcModule.SendMergeRequestBinary<TKey>(cacheName, key, newCache.SerializeToBinary(value));
+                    else
+                        SyncRpcModule.SendMergeRequest<TKey, object>(cacheName, key, newCache.SerializeToObject(value));
+                }
+            };
+
+            newCache.OnDataRemoved += (key) =>
+            {
+                if (!_isNetworkReady) return;
+                bool isHost = PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom;
+                if (isHost && (mode == SyncMode.HostAuthority || mode == SyncMode.Merge))
+                    SyncRpcModule.BroadcastRemove<TKey>(cacheName, key);
+            };
+
+            newCache.OnDataCleared += () =>
+            {
+                if (!_isNetworkReady) return;
+                bool isHost = PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom;
+                if (isHost && (mode == SyncMode.HostAuthority || mode == SyncMode.Merge))
+                    SyncRpcModule.BroadcastClear(cacheName);
+            };
+
+            Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 缓存 '{cacheName}' 已创建（模式：{mode}，二进制序列化：{newCache.UseBinarySerialization}，允许请求：{allowFullUpdateRequest}）。");
+            return newCache;
+        }
     }
 }

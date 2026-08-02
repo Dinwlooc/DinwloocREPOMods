@@ -2,6 +2,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using Dinwlooc.Common.Core;
 using Dinwlooc.Common.Sync;
 
 namespace Dinwlooc.Common.Caching
@@ -52,33 +53,21 @@ namespace Dinwlooc.Common.Caching
         /// 获取或创建同步缓存。若缓存已存在，会验证其序列化策略是否与传入参数一致，不一致则抛出异常。
         /// </summary>
         public static ISyncCache<TKey, TValue> GetOrCreateSyncCache<TKey, TValue>(
-            string cacheName,
-            SyncMode mode,
-            Action<BinaryWriter, TValue>? serialize = null,
-            Func<BinaryReader, TValue>? deserialize = null,
-            Func<TValue, TValue, TValue>? mergeFunc = null)
-            where TKey : notnull
+    string cacheName,
+    SyncMode mode,
+    Action<BinaryWriter, TValue>? serialize = null,
+    Func<BinaryReader, TValue>? deserialize = null,
+    Func<TValue, TValue, TValue>? mergeFunc = null)
+    where TKey : notnull
         {
-            bool requireBinary = (serialize != null && deserialize != null);
-
-            if (_caches.TryGetValue(cacheName, out object existing) && existing is ISyncCache<TKey, TValue> typed)
+            var cache = (ISyncCache<TKey, TValue>)_caches.GetOrAdd(cacheName, key =>
             {
-                // 检查策略是否匹配
-                bool existingIsBinary = typed.UseBinarySerialization;
-                if (requireBinary != existingIsBinary)
-                {
-                    throw new InvalidOperationException(
-                        $"缓存 '{cacheName}' 已存在但序列化策略不匹配：要求 {(requireBinary ? "二进制" : "Hashtable")}，实际为 {(existingIsBinary ? "二进制" : "Hashtable")}。");
-                }
-                return typed;
-            }
-
-            // 新建缓存
-            ISyncCache<TKey, TValue> cache = SyncManager.Instance.GetOrCreateSyncCache<TKey, TValue>(
-                cacheName, mode, mergeFunc, serialize, deserialize);
-
-            _caches[cacheName] = cache;
-            Core.CommonPlugin.Logger.LogInfo($"同步缓存 '{cacheName}' 已注册到缓存中心（序列化：{(cache.UseBinarySerialization ? "二进制" : "Hashtable")}）。");
+                int factoryDictHash = _caches.GetHashCode();
+                var newCache = SyncManager.Instance.CreateSyncCache<TKey, TValue>(
+                    key, mode, mergeFunc, serialize, deserialize);
+                return newCache;
+            });
+            int afterDictHash = _caches.GetHashCode();
             return cache;
         }
 

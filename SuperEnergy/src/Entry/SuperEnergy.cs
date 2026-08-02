@@ -71,7 +71,6 @@ namespace SuperEnergy
         private void OnDestroy()
         {
             Config.SettingChanged -= OnConfigSettingChanged;
-            _configManager?.Shutdown();
         }
     }
 }

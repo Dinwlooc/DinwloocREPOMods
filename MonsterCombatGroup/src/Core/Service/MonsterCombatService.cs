@@ -1,11 +1,11 @@
 ﻿using System.Collections.Generic;
 using Dinwlooc.Common.Bridge;
 using Dinwlooc.Common.Core;
+using Dinwlooc.Common.Events;
 using Dinwlooc.Common.IBridge;
 using MonsterCombatGroup.Handler;
 using Photon.Pun;
 using UnityEngine;
-using UnityEngine.SceneManagement;
 
 namespace MonsterCombatGroup
 {
@@ -17,7 +17,7 @@ namespace MonsterCombatGroup
         private float _nextTickTime = 0f;
         private IGameStateBridge? _gameState;
         private bool _isInitialized = false;
-        private bool _sceneLoadedSubscribed = false;
+        private bool _subscribed = false;
 
         private void Awake()
         {
@@ -42,14 +42,15 @@ namespace MonsterCombatGroup
             _handlers.Add(new LeaderAbilityHandler());
             _handlers.Add(new GuardAbilityHandler());
             _handlers.Add(new LeaderCombatHandler());
-            _handlers.Add(new LeaderDeathRewardHandler()); // 新增
+            _handlers.Add(new LeaderDeathRewardHandler());
 
             PhotonNetwork.AddCallbackTarget(this);
 
-            if (!_sceneLoadedSubscribed)
+            // 订阅场景切换事件（替代 Unity 原生 sceneLoaded）
+            if (!_subscribed)
             {
-                SceneManager.sceneLoaded += OnSceneLoaded;
-                _sceneLoadedSubscribed = true;
+                EventBus.Subscribe<SceneChangedEvent>(OnSceneChanged);
+                _subscribed = true;
             }
 
             _isInitialized = true;
@@ -72,13 +73,16 @@ namespace MonsterCombatGroup
             }
         }
 
-        private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+        // 场景切换事件处理（替代 OnSceneLoaded）
+        private void OnSceneChanged(SceneChangedEvent evt)
         {
-            if (!SemiFunc.RunIsLevel()) return;
-            if (_gameState != null && _gameState.IsMainMenu()) return;
-            if (!SemiFunc.IsMasterClientOrSingleplayer()) return;
+            // 只在关卡或大厅场景重置（排除主菜单、商店、过渡场景等）
+            if (evt.Type != SceneType.Level && evt.Type != SceneType.Lobby)
+                return;
+            if (!SemiFunc.IsMasterClientOrSingleplayer())
+                return;
 
-            MonsterCombatGroup.Logger.LogInfo($"关卡加载：{scene.name}，重置状态。");
+            MonsterCombatGroup.Logger.LogInfo($"场景切换：{evt.SceneName}，重置状态。");
             foreach (ICombatHandler handler in _handlers)
             {
                 if (handler is IResettable resettable)
@@ -100,10 +104,10 @@ namespace MonsterCombatGroup
             if (_isInitialized)
             {
                 PhotonNetwork.RemoveCallbackTarget(this);
-                if (_sceneLoadedSubscribed)
+                if (_subscribed)
                 {
-                    SceneManager.sceneLoaded -= OnSceneLoaded;
-                    _sceneLoadedSubscribed = false;
+                    EventBus.Unsubscribe<SceneChangedEvent>(OnSceneChanged);
+                    _subscribed = false;
                 }
                 _handlers.Clear();
                 _isInitialized = false;

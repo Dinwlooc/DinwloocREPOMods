@@ -1,15 +1,15 @@
 ﻿using System.Collections.Generic;
 using Dinwlooc.Common.Bridge;
+using Dinwlooc.Common.Events;
 using Dinwlooc.Common.IBridge;
 using UnityEngine;
-using UnityEngine.SceneManagement;
 
 namespace Dinwlooc.Common.Core
 {
     /// <summary>
     /// 怪物事件生成器：负责扫描怪物列表，并为每个怪物挂载 <see cref="EnemyEventRelay"/> 转发器。
     /// 继承自 <see cref="EventGeneratorBase{object}"/>，由模组显式调用 RegisterStep 启动。
-    /// 监听场景加载事件，在关卡重进时清空已挂载 ID 缓存，确保新怪物可正确挂载。
+    /// 监听场景切换事件，在关卡重进时清空已挂载 ID 缓存，确保新怪物可正确挂载。
     /// </summary>
     public class EnemyEventGenerator : EventGeneratorBase<object>
     {
@@ -32,7 +32,7 @@ namespace Dinwlooc.Common.Core
         private IEnemyBridge _enemyBridge;
         private readonly HashSet<int> _attachedEnemyIds = new HashSet<int>();
         private bool _isInitialized = false;
-        private bool _sceneLoadedSubscribed = false;
+        private bool _subscribed = false;
 
         private void Awake()
         {
@@ -44,11 +44,11 @@ namespace Dinwlooc.Common.Core
             _instance = this;
             DontDestroyOnLoad(gameObject);
 
-            // 订阅场景加载事件，在关卡加载时清空缓存
-            if (!_sceneLoadedSubscribed)
+            // 订阅场景切换事件（替代 Unity 原生 sceneLoaded）
+            if (!_subscribed)
             {
-                SceneManager.sceneLoaded += OnSceneLoaded;
-                _sceneLoadedSubscribed = true;
+                EventBus.Subscribe<SceneChangedEvent>(OnSceneChanged);
+                _subscribed = true;
             }
         }
 
@@ -60,15 +60,16 @@ namespace Dinwlooc.Common.Core
             CommonPlugin.Logger.LogInfo("EnemyEventGenerator created (idle).");
         }
 
-        private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+        // 场景切换事件处理（替代 OnSceneLoaded）
+        private void OnSceneChanged(SceneChangedEvent evt)
         {
-            // 只在关卡场景加载时清空（非主菜单/商店）
-            if (!SemiFunc.RunIsLevel()) return;
-            if (_gameState != null && _gameState.IsMainMenu()) return;
+            // 只在关卡场景加载时清空（排除主菜单、商店、过渡场景等）
+            if (evt.Type != SceneType.Level)
+                return;
 
             // 清空已挂载 ID 缓存，因为怪物实例已重置
             _attachedEnemyIds.Clear();
-            CommonPlugin.Logger.LogInfo($"EnemyEventGenerator 清空已挂载 ID 缓存（关卡加载：{scene.name}）。");
+            CommonPlugin.Logger.LogInfo($"EnemyEventGenerator 清空已挂载 ID 缓存（关卡加载：{evt.SceneName}）。");
         }
 
         protected override void GenerateEvent()
@@ -118,10 +119,10 @@ namespace Dinwlooc.Common.Core
 
         private void OnDestroy()
         {
-            if (_sceneLoadedSubscribed)
+            if (_subscribed)
             {
-                SceneManager.sceneLoaded -= OnSceneLoaded;
-                _sceneLoadedSubscribed = false;
+                EventBus.Unsubscribe<SceneChangedEvent>(OnSceneChanged);
+                _subscribed = false;
             }
         }
     }
