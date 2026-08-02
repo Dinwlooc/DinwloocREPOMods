@@ -7,14 +7,13 @@ namespace Dinwlooc.Common.Bridge
     /// <summary>
     /// 外观覆盖实现，通过本地玩家组件调用原版覆盖方法。
     /// </summary>
-    public class AppearanceOverrideBridge : IAppearanceOverrideBridge
+    public class AppearanceOverrideBridge : BridgeSingleton<AppearanceOverrideBridge>, IAppearanceOverrideBridge
     {
-        private static AppearanceOverrideBridge? _instance;
-        public static AppearanceOverrideBridge Instance => _instance ??= new AppearanceOverrideBridge();
+        private const float DefaultTime = 0.1f;
 
         private AppearanceOverrideBridge() { }
 
-        private PlayerAvatar? GetLocalPlayer()
+        private PlayerAvatar GetLocalPlayer()
         {
             if (PlayerController.instance == null)
             {
@@ -24,30 +23,30 @@ namespace Dinwlooc.Common.Bridge
             return PlayerController.instance.playerAvatarScript;
         }
 
-        public void OverridePupilSize(float multiplier, int priority, float springSpeedIn, float dampIn, float springSpeedOut, float dampOut, float time = 0.1f)
+        public void OverridePupilSize(float multiplier, int priority, float springSpeedIn, float dampIn, float springSpeedOut, float dampOut, float time = DefaultTime)
         {
-            PlayerAvatar? player = GetLocalPlayer();
+            PlayerAvatar player = GetLocalPlayer();
             if (player == null) return;
             player.OverridePupilSize(multiplier, priority, springSpeedIn, dampIn, springSpeedOut, dampOut, time);
         }
 
-        public void OverrideTTSPosition(float time = 0.1f)
+        public void OverrideTTSPosition(float time = DefaultTime)
         {
-            PlayerAvatar? player = GetLocalPlayer();
+            PlayerAvatar player = GetLocalPlayer();
             if (player == null) return;
             player.OverrideTTSPosition(time);
         }
 
         public void EyeMaterialOverride(PlayerHealth.EyeOverrideState state, float time, int priority)
         {
-            PlayerAvatar? player = GetLocalPlayer();
+            PlayerAvatar player = GetLocalPlayer();
             if (player == null || player.playerHealth == null) return;
             player.playerHealth.EyeMaterialOverride(state, time, priority);
         }
 
         public void MaterialEffectOverride(PlayerHealth.Effect effect)
         {
-            PlayerAvatar? player = GetLocalPlayer();
+            PlayerAvatar player = GetLocalPlayer();
             if (player == null || player.playerHealth == null) return;
             player.playerHealth.MaterialEffectOverride(effect);
         }

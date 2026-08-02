@@ -7,14 +7,13 @@ namespace Dinwlooc.Common.Bridge
     /// <summary>
     /// 死亡头部覆盖实现，通过本地玩家的 PlayerDeathHead 调用原版覆盖方法。
     /// </summary>
-    public class DeathHeadOverrideBridge : IDeathHeadOverrideBridge
+    public class DeathHeadOverrideBridge : BridgeSingleton<DeathHeadOverrideBridge>, IDeathHeadOverrideBridge
     {
-        private static DeathHeadOverrideBridge? _instance;
-        public static DeathHeadOverrideBridge Instance => _instance ??= new DeathHeadOverrideBridge();
+        private const float DefaultTime = 0.1f;
 
         private DeathHeadOverrideBridge() { }
 
-        private PlayerDeathHead? GetDeathHead()
+        private PlayerDeathHead GetDeathHead()
         {
             if (PlayerController.instance?.playerAvatarScript?.playerDeathHead == null)
             {
@@ -26,28 +25,28 @@ namespace Dinwlooc.Common.Bridge
 
         public void OverrideSpectated(float time)
         {
-            PlayerDeathHead? head = GetDeathHead();
+            PlayerDeathHead head = GetDeathHead();
             if (head == null) return;
             head.OverrideSpectated(time);
         }
 
         public void OverrideSpectatedReset()
         {
-            PlayerDeathHead? head = GetDeathHead();
+            PlayerDeathHead head = GetDeathHead();
             if (head == null) return;
             head.OverrideSpectatedReset();
         }
 
         public void OverridePositionRotation(Transform followTransform, Vector3 releasePosition, Quaternion releaseRotation, float time)
         {
-            PlayerDeathHead? head = GetDeathHead();
+            PlayerDeathHead head = GetDeathHead();
             if (head == null) return;
             head.OverridePositionRotation(followTransform, releasePosition, releaseRotation, time);
         }
 
         public void OverridePositionRotationReset()
         {
-            PlayerDeathHead? head = GetDeathHead();
+            PlayerDeathHead head = GetDeathHead();
             if (head == null) return;
             head.OverridePositionRotationReset();
         }

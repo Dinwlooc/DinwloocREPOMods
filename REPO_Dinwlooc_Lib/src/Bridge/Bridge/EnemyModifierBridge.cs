@@ -2,7 +2,6 @@
 using Dinwlooc.Common.Core;
 using Dinwlooc.Common.IBridge;
 using Dinwlooc.Common.Reflection;
-using Unity.VisualScripting;
 using UnityEngine;
 
 namespace Dinwlooc.Common.Bridge
@@ -11,12 +10,10 @@ namespace Dinwlooc.Common.Bridge
     /// 实现 IEnemyModifierBridge，通过依赖库的 ReflectionCache 中心缓存访问私有字段。
     /// 所有操作均检查主机权限。
     /// </summary>
-    public class EnemyModifierBridge : IEnemyModifierBridge
+    public class EnemyModifierBridge : BridgeSingleton<EnemyModifierBridge>, IEnemyModifierBridge
     {
-        private static EnemyModifierBridge? _instance;
-        public static EnemyModifierBridge Instance => _instance ??= new EnemyModifierBridge();
-
         private EnemyModifierBridge() { }
+
         public void SetHealth(EnemyParent enemy, int newHealth)
         {
             if (!SemiFunc.IsMasterClientOrSingleplayer()) return;
@@ -25,7 +22,6 @@ namespace Dinwlooc.Common.Bridge
             EnemyHealth health = enemy.Enemy.Health;
             if (health == null) return;
 
-            // 直接修改 public 字段
             health.health = newHealth;
             health.healthCurrent = newHealth;
         }
@@ -38,7 +34,6 @@ namespace Dinwlooc.Common.Bridge
             Enemy enemyComp = enemy.Enemy;
             if (!enemyComp.HasStateStunned) return;
 
-            // 使用 ReflectionCache 获取私有字段（自动缓存到中心）
             FieldInfo stateStunnedField = ReflectionCache.GetField(
                 typeof(Enemy),
                 "StateStunned",
@@ -53,7 +48,6 @@ namespace Dinwlooc.Common.Bridge
             object stateStunned = stateStunnedField.GetValue(enemyComp);
             if (stateStunned == null) return;
 
-            // 获取 stunTimer 字段（通常是 public）
             FieldInfo stunTimerField = ReflectionCache.GetField(
                 stateStunned.GetType(),
                 "stunTimer",
@@ -79,13 +73,11 @@ namespace Dinwlooc.Common.Bridge
         {
             if (!SemiFunc.IsMasterClientOrSingleplayer()) return;
             if (enemy == null || enemy.Enemy == null) return;
-
-            Enemy enemyComp = enemy.Enemy;
             if (target == null || target.isDisabled) return;
 
-            // 直接调用原版公开方法
-            enemyComp.SetChaseTarget(target);
+            enemy.Enemy.SetChaseTarget(target);
         }
+
         public void ApplyStunImmunity(EnemyParent enemy, float duration)
         {
             if (!SemiFunc.IsMasterClientOrSingleplayer()) return;
@@ -95,10 +87,8 @@ namespace Dinwlooc.Common.Bridge
             Enemy enemyComp = enemy.Enemy;
             if (!enemyComp.HasStateStunned) return;
 
-            // 先重置当前眩晕，确保免疫立即生效
             ResetStun(enemy);
 
-            // 获取 EnemyStateStunned 组件并调用 OverrideDisable
             FieldInfo stateStunnedField = ReflectionCache.GetField(
                 typeof(Enemy),
                 "StateStunned",

@@ -1,14 +1,12 @@
-﻿using Dinwlooc.Common.IBridge;
-using Dinwlooc.Common.Core;
+﻿using Dinwlooc.Common.Core;
+using Dinwlooc.Common.IBridge;
 using UnityEngine;
-using System;
 
 namespace Dinwlooc.Common.Bridge
 {
-    public class MovementOverrideBridge : IMovementOverrideBridge
+    public class MovementOverrideBridge : BridgeSingleton<MovementOverrideBridge>, IMovementOverrideBridge
     {
-        private static MovementOverrideBridge? _instance;
-        public static MovementOverrideBridge Instance => _instance ??= new MovementOverrideBridge();
+        private const float DefaultTime = 0.1f;
 
         private float _originalMoveSpeed;
         private float _originalSprintSpeed;
@@ -18,7 +16,7 @@ namespace Dinwlooc.Common.Bridge
 
         private MovementOverrideBridge() { }
 
-        private PlayerController? GetController()
+        private PlayerController GetController()
         {
             if (PlayerController.instance == null)
             {
@@ -31,7 +29,7 @@ namespace Dinwlooc.Common.Bridge
         private void CacheOriginalValues()
         {
             if (_originalValuesCached) return;
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
             _originalMoveSpeed = ctrl.MoveSpeed;
             _originalSprintSpeed = ctrl.SprintSpeed;
@@ -40,74 +38,66 @@ namespace Dinwlooc.Common.Bridge
             _originalValuesCached = true;
         }
 
-        public void OverrideSpeed(float speedMultiplier, float timeIn, float timeOut, float time = 0.1f)
+        public void OverrideSpeed(float speedMultiplier, float timeIn, float timeOut, float time = DefaultTime)
         {
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
-            // 原版只有两个参数，忽略 timeIn/timeOut
             ctrl.OverrideSpeed(speedMultiplier, time);
             CommonPlugin.Logger.LogDebug($"[MovementOverrideBridge] OverrideSpeed: {speedMultiplier}x for {time}s");
         }
 
-        public void OverrideTimeScale(float timeScaleMultiplier, float time = 0.1f)
+        public void OverrideTimeScale(float timeScaleMultiplier, float time = DefaultTime)
         {
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
             ctrl.OverrideTimeScale(timeScaleMultiplier, time);
-            CommonPlugin.Logger.LogDebug($"[MovementOverrideBridge] OverrideTimeScale: {timeScaleMultiplier}x for {time}s");
         }
 
-        public void OverrideLookSpeed(float lookSpeedTarget, float timeIn, float timeOut, float time = 0.1f)
+        public void OverrideLookSpeed(float lookSpeedTarget, float timeIn, float timeOut, float time = DefaultTime)
         {
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
             ctrl.OverrideLookSpeed(lookSpeedTarget, timeIn, timeOut, time);
-            CommonPlugin.Logger.LogDebug($"[MovementOverrideBridge] OverrideLookSpeed: target={lookSpeedTarget} for {time}s");
         }
 
-        public void OverrideVoicePitch(float voicePitchMultiplier, float timeIn, float timeOut, float time = 0.1f)
+        public void OverrideVoicePitch(float voicePitchMultiplier, float timeIn, float timeOut, float time = DefaultTime)
         {
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
             ctrl.OverrideVoicePitch(voicePitchMultiplier, timeIn, timeOut, time);
-            CommonPlugin.Logger.LogDebug($"[MovementOverrideBridge] OverrideVoicePitch: {voicePitchMultiplier}x for {time}s");
         }
 
         public void OverrideJumpCooldown(float cooldown)
         {
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
             ctrl.OverrideJumpCooldown(cooldown);
-            CommonPlugin.Logger.LogDebug($"[MovementOverrideBridge] OverrideJumpCooldown: {cooldown}s");
         }
 
-        public void OverrideDisableTurn(float time = 0.1f, bool reset = false)
+        public void OverrideDisableTurn(float time = DefaultTime, bool reset = false)
         {
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
             ctrl.OverrideDisableTurn(time, reset);
-            CommonPlugin.Logger.LogDebug($"[MovementOverrideBridge] OverrideDisableTurn: {time}s, reset={reset}");
         }
 
-        public void OverrideTurnRotation(Quaternion rotation, float time = 0.1f)
+        public void OverrideTurnRotation(Quaternion rotation, float time = DefaultTime)
         {
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
             ctrl.OverrideTurnRotation(rotation, time);
-            CommonPlugin.Logger.LogDebug($"[MovementOverrideBridge] OverrideTurnRotation for {time}s");
         }
 
-        public void OverrideAnimationSpeed(float animSpeedMulti, float timeIn, float timeOut, float time = 0.1f)
+        public void OverrideAnimationSpeed(float animSpeedMulti, float timeIn, float timeOut, float time = DefaultTime)
         {
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
             ctrl.OverrideAnimationSpeed(animSpeedMulti, timeIn, timeOut, time);
-            CommonPlugin.Logger.LogDebug($"[MovementOverrideBridge] OverrideAnimationSpeed: {animSpeedMulti}x for {time}s");
         }
 
         public void SetMoveSpeed(float speed)
         {
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
             CacheOriginalValues();
             ctrl.MoveSpeed = speed;
@@ -115,7 +105,7 @@ namespace Dinwlooc.Common.Bridge
 
         public void ResetMoveSpeed()
         {
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
             CacheOriginalValues();
             ctrl.MoveSpeed = _originalMoveSpeed;
@@ -123,7 +113,7 @@ namespace Dinwlooc.Common.Bridge
 
         public void SetSprintSpeed(float speed)
         {
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
             CacheOriginalValues();
             ctrl.SprintSpeed = speed;
@@ -131,7 +121,7 @@ namespace Dinwlooc.Common.Bridge
 
         public void ResetSprintSpeed()
         {
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
             CacheOriginalValues();
             ctrl.SprintSpeed = _originalSprintSpeed;
@@ -139,7 +129,7 @@ namespace Dinwlooc.Common.Bridge
 
         public void SetCrouchSpeed(float speed)
         {
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
             CacheOriginalValues();
             ctrl.CrouchSpeed = speed;
@@ -147,7 +137,7 @@ namespace Dinwlooc.Common.Bridge
 
         public void ResetCrouchSpeed()
         {
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
             CacheOriginalValues();
             ctrl.CrouchSpeed = _originalCrouchSpeed;
@@ -155,7 +145,7 @@ namespace Dinwlooc.Common.Bridge
 
         public void SetCustomGravity(float gravity)
         {
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
             CacheOriginalValues();
             ctrl.CustomGravity = gravity;
@@ -163,7 +153,7 @@ namespace Dinwlooc.Common.Bridge
 
         public void ResetCustomGravity()
         {
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
             CacheOriginalValues();
             ctrl.CustomGravity = _originalCustomGravity;
@@ -171,49 +161,49 @@ namespace Dinwlooc.Common.Bridge
 
         public void MoveForce(Vector3 direction, float amount, float time)
         {
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
             ctrl.MoveForce(direction, amount, time);
         }
 
         public void ForceImpulse(Vector3 force)
         {
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
             ctrl.ForceImpulse(force);
         }
 
         public void AntiGravity(float timer)
         {
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
             ctrl.AntiGravity(timer);
         }
 
         public void Feather(float timer)
         {
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
             ctrl.Feather(timer);
         }
 
         public void Kinematic(float timer)
         {
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
             ctrl.Kinematic(timer);
         }
 
         public void InputDisable(float time)
         {
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
             ctrl.InputDisable(time);
         }
 
         public void CrouchOverride(float time)
         {
-            var ctrl = GetController();
+            PlayerController ctrl = GetController();
             if (ctrl == null) return;
             ctrl.CrouchOverride(time);
         }

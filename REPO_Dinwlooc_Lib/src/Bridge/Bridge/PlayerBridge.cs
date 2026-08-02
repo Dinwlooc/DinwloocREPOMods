@@ -1,30 +1,34 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Reflection;
+using Dinwlooc.Common.Core;
 using Dinwlooc.Common.IBridge;
 using Dinwlooc.Common.Reflection;
 using UnityEngine;
 
 namespace Dinwlooc.Common.Bridge
 {
-    public class PlayerBridge : IPlayerBridge, IEnergyBridge
+    public class PlayerBridge : BridgeSingleton<PlayerBridge>, IPlayerBridge, IEnergyBridge
     {
-        private static PlayerBridge? _instance;
-        public static PlayerBridge Instance => _instance ??= new PlayerBridge();
+        private const float DefaultHealth = 100f;
+        private const float DefaultRegenRate = 2f;
+        private const float ArenaMultiplier = 5f;
+        private const float CrouchMovePenalty = 0.5f;
+
         private PlayerBridge() { }
 
-        // 获取 PlayerController 实例（仅本地玩家有效）
-        private PlayerController? GetController(PlayerAvatar player)
+        private PlayerController GetController(PlayerAvatar player)
         {
             if (player == null || !player.isLocal) return null;
             return PlayerController.instance;
         }
 
         // ========== IPlayerBridge ==========
-        public PlayerAvatar? GetLocalPlayer() => PlayerController.instance?.playerAvatarScript;
+        public PlayerAvatar GetLocalPlayer() => PlayerController.instance?.playerAvatarScript;
+
         public List<PlayerAvatar> GetAllPlayers()
         {
-            var list = new List<PlayerAvatar>();
+            List<PlayerAvatar> list = new List<PlayerAvatar>();
             if (GameDirector.instance == null) return list;
             foreach (PlayerAvatar p in GameDirector.instance.PlayerList)
             {
@@ -46,8 +50,8 @@ namespace Dinwlooc.Common.Bridge
 
         public int GetPlayerHP(string steamID)
         {
-            if (StatsManager.instance == null) return 100;
-            return StatsManager.instance.playerHealth.TryGetValue(steamID, out int hp) ? hp : 100;
+            if (StatsManager.instance == null) return (int)DefaultHealth;
+            return StatsManager.instance.playerHealth.TryGetValue(steamID, out int hp) ? hp : (int)DefaultHealth;
         }
 
         public void SetPlayerHP(string steamID, int newHP)
@@ -56,14 +60,13 @@ namespace Dinwlooc.Common.Bridge
                 StatsManager.instance.playerHealth[steamID] = newHP;
         }
 
-        public T? GetComponentOnPlayer<T>(PlayerAvatar player) where T : Component
+        public T GetComponentOnPlayer<T>(PlayerAvatar player) where T : Component
         {
             if (player == null) return null;
             return player.GetComponent<T>();
         }
 
         // ========== IEnergyBridge ==========
-        // ---- 基础属性 ----
         public float GetCurrentEnergy(PlayerAvatar player)
         {
             PlayerController ctrl = GetController(player);
@@ -93,7 +96,6 @@ namespace Dinwlooc.Common.Bridge
             SetEnergy(player, current + delta);
         }
 
-        // ---- 自然恢复规则 ----
         public bool CanRegen(PlayerAvatar player)
         {
             if (!player.isLocal) return false;
@@ -109,8 +111,8 @@ namespace Dinwlooc.Common.Bridge
         {
             if (!player.isLocal) return 0f;
             PlayerController ctrl = PlayerController.instance;
-            if (ctrl == null) return 2f;
-            float baseRate = 2f;
+            if (ctrl == null) return DefaultRegenRate;
+            float baseRate = DefaultRegenRate;
             try
             {
                 FieldInfo field = ReflectionCache.PlayerController_sprintRechargeAmount;
@@ -118,7 +120,7 @@ namespace Dinwlooc.Common.Bridge
                     baseRate = (float)field.GetValue(ctrl);
             }
             catch { /* 忽略 */ }
-            if (SemiFunc.RunIsArena()) baseRate *= 5f;
+            if (SemiFunc.RunIsArena()) baseRate *= ArenaMultiplier;
             return baseRate;
         }
 
@@ -176,14 +178,13 @@ namespace Dinwlooc.Common.Bridge
             return 1f;
         }
 
-        // ---- 下蹲额外恢复 ----
         public int GetCrouchRestUpgradeLevel(PlayerAvatar player)
         {
             if (player == null) return 0;
             string steamID = SemiFunc.PlayerGetSteamID(player);
             try
             {
-                var upgrades = BridgeLocator.Upgrade.FetchUpgrades(steamID);
+                Dictionary<string, int> upgrades = BridgeLocator.Upgrade.FetchUpgrades(steamID);
                 return upgrades.TryGetValue("playerUpgradeCrouchRest", out int level) ? level : 0;
             }
             catch { return 0; }
@@ -204,7 +205,7 @@ namespace Dinwlooc.Common.Bridge
             if (!player.isLocal) return 0f;
 
             float rate = 1f + player.upgradeCrouchRest;
-            if (player.isMoving) rate *= 0.5f;
+            if (player.isMoving) rate *= CrouchMovePenalty;
             return rate;
         }
 
@@ -214,7 +215,6 @@ namespace Dinwlooc.Common.Bridge
             return player.upgradeCrouchRestActive;
         }
 
-        // ---- 总恢复速率（整合） ----
         public float GetCurrentRegenRate(PlayerAvatar player)
         {
             float total = 0f;
@@ -224,7 +224,6 @@ namespace Dinwlooc.Common.Bridge
             return total;
         }
 
-        // ---- 按原版规则恢复 ----
         public void ApplyRegenTick(PlayerAvatar player, float deltaTime)
         {
             float rate = GetCurrentRegenRate(player);

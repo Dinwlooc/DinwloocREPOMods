@@ -1,12 +1,14 @@
 using Photon.Pun;
 using Dinwlooc.Common.IBridge;
 using UnityEngine;
+using System.Reflection;
 
 namespace QuickReload
 {
     public sealed class QuickReloadService
     {
         private const int MaxRandomAttempts = 50;
+        private static readonly FieldInfo RunManagerPUNField = typeof(RunManager).GetField("runManagerPUN", BindingFlags.NonPublic | BindingFlags.Instance);
 
         private readonly IGameStateBridge _gameState;
         private readonly ISaveLoadBridge _saveLoad;
@@ -27,7 +29,7 @@ namespace QuickReload
             if (!_gameState.IsMasterClientOrSingleplayer())
                 return;
 
-            var rm = RunManager.instance;
+            RunManager rm = RunManager.instance;
             if (rm == null)
             {
                 QuickReload.Logger.LogError("RunManager.instance is null, cannot reload.");
@@ -36,7 +38,6 @@ namespace QuickReload
 
             try
             {
-                // 根据场景类型执行不同的准备操作
                 if (SemiFunc.RunIsShop() || SemiFunc.RunIsLobby())
                 {
                     ReloadShopOrLobby();
@@ -51,7 +52,6 @@ namespace QuickReload
                     return;
                 }
 
-                // 通用清理和同步
                 ClearItemDictionary();
                 SyncAndCleanup();
 
@@ -72,7 +72,7 @@ namespace QuickReload
             if (!_gameState.IsMasterClientOrSingleplayer())
                 return;
 
-            var rm = RunManager.instance;
+            RunManager rm = RunManager.instance;
             if (rm == null)
             {
                 QuickReload.Logger.LogError("RunManager.instance is null, cannot go to shop.");
@@ -126,17 +126,33 @@ namespace QuickReload
                 }
             }
 
+            // 通过反射获取 RunManagerPUN 实例并发送 RPC
             if (PhotonNetwork.IsConnected && PhotonNetwork.InRoom)
             {
-                var pun = rm.GetComponent<RunManagerPUN>();
+                RunManagerPUN pun = null;
+                if (RunManagerPUNField != null)
+                {
+                    pun = RunManagerPUNField.GetValue(rm) as RunManagerPUN;
+                }
+                else
+                {
+                    QuickReload.Logger.LogError("RunManagerPUNField is null, cannot retrieve RunManagerPUN.");
+                }
+
                 if (pun != null && pun.photonView != null)
                 {
                     pun.photonView.RPC(
                         "UpdateLevelRPC",
                         RpcTarget.OthersBuffered,
-                        new object[] { rm.levelCurrent.name, rm.levelsCompleted, rm.gameOver }
+                        rm.levelCurrent.name,
+                        rm.levelsCompleted,
+                        rm.gameOver
                     );
                     QuickReload.Logger.LogInfo("Sent UpdateLevelRPC to clients.");
+                }
+                else
+                {
+                    QuickReload.Logger.LogWarning("RunManagerPUN or photonView is null, cannot sync level to clients.");
                 }
             }
         }

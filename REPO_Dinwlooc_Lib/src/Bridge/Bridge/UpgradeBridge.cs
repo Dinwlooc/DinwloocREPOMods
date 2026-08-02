@@ -1,23 +1,19 @@
-﻿// Dinwlooc.Common/Bridge/UpgradeBridge.cs
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Reflection;
+using Dinwlooc.Common.Core;
 using Dinwlooc.Common.IBridge;
-using REPOLib.Modules;  // 软引用，如果不存在则忽略
+using REPOLib.Modules;
+using UnityEngine;
 
 namespace Dinwlooc.Common.Bridge
 {
-    public class UpgradeBridge : IUpgradeBridge
+    public class UpgradeBridge : BridgeSingleton<UpgradeBridge>, IUpgradeBridge
     {
-        private static UpgradeBridge? _instance;
-        public static UpgradeBridge Instance => _instance ??= new UpgradeBridge();
-        private UpgradeBridge() { }
+        private Dictionary<string, Item> _upgradeItemCache;
+        private readonly object _cacheLock = new object();
 
-        private Dictionary<string, Item>? _upgradeItemCache;
-        private readonly object _cacheLock = new();
-
-        // 原生升级类型映射
-        private static readonly Dictionary<string, string> KeyToComponentType = new()
+        private static readonly Dictionary<string, string> KeyToComponentType = new Dictionary<string, string>
         {
             { "playerUpgradeHealth", "ItemUpgradePlayerHealth" },
             { "playerUpgradeStamina", "ItemUpgradePlayerEnergy" },
@@ -34,6 +30,8 @@ namespace Dinwlooc.Common.Bridge
             { "playerUpgradeMapPlayerCount", "ItemUpgradeMapPlayerCount" },
         };
 
+        private UpgradeBridge() { }
+
         public void RefreshUpgradeItemCache()
         {
             lock (_cacheLock)
@@ -41,15 +39,15 @@ namespace Dinwlooc.Common.Bridge
                 _upgradeItemCache = new Dictionary<string, Item>();
                 if (StatsManager.instance == null) return;
 
-                foreach (var entry in StatsManager.instance.itemDictionary)
+                // 修正：StatsManager.itemDictionary 实际类型为 Dictionary<string, Item>
+                foreach (KeyValuePair<string, Item> entry in StatsManager.instance.itemDictionary)
                 {
-                    var item = entry.Value;
+                    Item item = entry.Value;
                     if (item.itemType != SemiFunc.itemType.item_upgrade) continue;
-                    var prefab = item.prefab?.Prefab;
+                    GameObject prefab = item.prefab?.Prefab;
                     if (prefab == null) continue;
 
-                    // 尝试 REPOLib 自定义升级
-                    var repolibComp = prefab.GetComponent<REPOLibItemUpgrade>();
+                    REPOLibItemUpgrade repolibComp = prefab.GetComponent<REPOLibItemUpgrade>();
                     if (repolibComp != null && !string.IsNullOrEmpty(repolibComp.UpgradeId))
                     {
                         if (!_upgradeItemCache.ContainsKey(repolibComp.UpgradeId))
@@ -57,11 +55,10 @@ namespace Dinwlooc.Common.Bridge
                         continue;
                     }
 
-                    // 原生升级匹配
-                    foreach (var kvp in KeyToComponentType)
+                    foreach (KeyValuePair<string, string> kvp in KeyToComponentType)
                     {
                         if (_upgradeItemCache.ContainsKey(kvp.Key)) continue;
-                        var type = typeof(PlayerAvatar).Assembly.GetType(kvp.Value);
+                        Type type = typeof(PlayerAvatar).Assembly.GetType(kvp.Value);
                         if (type != null && prefab.GetComponent(type) != null)
                         {
                             _upgradeItemCache[kvp.Key] = item;
@@ -74,14 +71,14 @@ namespace Dinwlooc.Common.Bridge
 
         public Dictionary<string, int> FetchUpgrades(string steamID)
         {
-            var raw = StatsManager.instance?.FetchPlayerUpgrades(steamID);
+            Dictionary<string, int> raw = StatsManager.instance?.FetchPlayerUpgrades(steamID);
             return raw != null ? new Dictionary<string, int>(raw) : new Dictionary<string, int>();
         }
 
-        public Item? FindItemByUpgradeKey(string upgradeKey)
+        public Item FindItemByUpgradeKey(string upgradeKey)
         {
             if (_upgradeItemCache == null) RefreshUpgradeItemCache();
-            return _upgradeItemCache?.TryGetValue(upgradeKey, out var item) == true ? item : null;
+            return _upgradeItemCache?.TryGetValue(upgradeKey, out Item item) == true ? item : null;
         }
 
         public void ClearUpgradeStat(string steamID, string upgradeKey)

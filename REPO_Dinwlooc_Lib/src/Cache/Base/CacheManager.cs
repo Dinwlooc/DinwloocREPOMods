@@ -48,6 +48,9 @@ namespace Dinwlooc.Common.Caching
             return newCache;
         }
 
+        /// <summary>
+        /// 获取或创建同步缓存。若缓存已存在，会验证其序列化策略是否与传入参数一致，不一致则抛出异常。
+        /// </summary>
         public static ISyncCache<TKey, TValue> GetOrCreateSyncCache<TKey, TValue>(
             string cacheName,
             SyncMode mode,
@@ -56,14 +59,26 @@ namespace Dinwlooc.Common.Caching
             Func<TValue, TValue, TValue>? mergeFunc = null)
             where TKey : notnull
         {
-            if (_caches.TryGetValue(cacheName, out object existing) && existing is ISyncCache<TKey, TValue> typed)
-                return typed;
+            bool requireBinary = (serialize != null && deserialize != null);
 
+            if (_caches.TryGetValue(cacheName, out object existing) && existing is ISyncCache<TKey, TValue> typed)
+            {
+                // 检查策略是否匹配
+                bool existingIsBinary = typed.UseBinarySerialization;
+                if (requireBinary != existingIsBinary)
+                {
+                    throw new InvalidOperationException(
+                        $"缓存 '{cacheName}' 已存在但序列化策略不匹配：要求 {(requireBinary ? "二进制" : "Hashtable")}，实际为 {(existingIsBinary ? "二进制" : "Hashtable")}。");
+                }
+                return typed;
+            }
+
+            // 新建缓存
             ISyncCache<TKey, TValue> cache = SyncManager.Instance.GetOrCreateSyncCache<TKey, TValue>(
                 cacheName, mode, mergeFunc, serialize, deserialize);
 
             _caches[cacheName] = cache;
-            Core.CommonPlugin.Logger.LogInfo($"同步缓存 '{cacheName}' 已注册到缓存中心。");
+            Core.CommonPlugin.Logger.LogInfo($"同步缓存 '{cacheName}' 已注册到缓存中心（序列化：{(cache.UseBinarySerialization ? "二进制" : "Hashtable")}）。");
             return cache;
         }
 
@@ -77,9 +92,6 @@ namespace Dinwlooc.Common.Caching
             _caches.Clear();
         }
 
-        /// <summary>
-        /// 获取所有同步缓存（用于遍历广播）。
-        /// </summary>
         public static ISyncCache[] GetAllSyncCaches()
         {
             List<ISyncCache> list = new List<ISyncCache>();
@@ -91,9 +103,6 @@ namespace Dinwlooc.Common.Caching
             return list.ToArray();
         }
 
-        /// <summary>
-        /// 尝试根据名称获取同步缓存（非泛型）。
-        /// </summary>
         public static bool TryGetSyncCache(string cacheName, out ISyncCache? cache)
         {
             if (_caches.TryGetValue(cacheName, out object obj) && obj is ISyncCache sync)

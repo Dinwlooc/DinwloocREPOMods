@@ -4,7 +4,6 @@ using Dinwlooc.Common.Bridge;
 using Dinwlooc.Common.Core;
 using Dinwlooc.Common.Events;
 using UnityEngine;
-using UnityEngine.SceneManagement;
 using System.Collections.Generic;
 
 namespace MonsterHighlight
@@ -18,7 +17,6 @@ namespace MonsterHighlight
         private MonsterHighlightConfig _config = null!;
         private HighlightController _controller = null!;
         private bool _isControllerStarted = false;
-        private bool _subscribedToScene = false;
 
         private void Awake()
         {
@@ -32,9 +30,8 @@ namespace MonsterHighlight
 
                 RegisterTranslations();
 
-                // 确保 SceneEventGenerator 激活（不影响原生监听）
-                var _ = SceneEventGenerator.Instance;
-                Logger.LogInfo("SceneEventGenerator instance ensured.");
+                // 确保 SceneEventGenerator 已激活，保证 SceneChangedEvent 正常发布
+                _ = SceneEventGenerator.Instance;
 
                 var enemyBridge = BridgeLocator.Enemy;
                 var playerBridge = BridgeLocator.Player;
@@ -47,17 +44,9 @@ namespace MonsterHighlight
                     gameStateBridge
                 );
 
-                // 订阅 SceneChangedEvent（备用）
+                // 仅订阅 SceneChangedEvent，不再监听原生 Unity 场景加载事件
                 EventBus.Subscribe<SceneChangedEvent>(OnSceneChanged);
                 Logger.LogInfo("Subscribed to SceneChangedEvent.");
-
-                // 直接订阅 Unity 场景加载事件，确保可靠性
-                if (!_subscribedToScene)
-                {
-                    SceneManager.sceneLoaded += OnSceneLoaded;
-                    _subscribedToScene = true;
-                    Logger.LogInfo("Subscribed to SceneManager.sceneLoaded.");
-                }
             }
             catch (System.Exception ex)
             {
@@ -94,21 +83,8 @@ namespace MonsterHighlight
 
         private void OnSceneChanged(SceneChangedEvent evt)
         {
-            Logger.LogInfo($"OnSceneChanged: {evt.Type} - {evt.SceneName}");
+            // 仅在关卡场景启动，其余场景停止
             if (evt.Type == SceneType.Level)
-            {
-                StartController();
-            }
-            else
-            {
-                StopController();
-            }
-        }
-
-        private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
-        {
-            Logger.LogInfo($"OnSceneLoaded: {scene.name}, buildIndex: {scene.buildIndex}");
-            if (SemiFunc.RunIsLevel())
             {
                 StartController();
             }
@@ -134,18 +110,13 @@ namespace MonsterHighlight
             {
                 _controller.Stop();
                 _isControllerStarted = false;
-                Logger.LogInfo("MonsterHighlight stopped (not in level).");
+                Logger.LogInfo("MonsterHighlight stopped.");
             }
         }
 
         private void OnDestroy()
         {
             EventBus.Unsubscribe<SceneChangedEvent>(OnSceneChanged);
-            if (_subscribedToScene)
-            {
-                SceneManager.sceneLoaded -= OnSceneLoaded;
-                _subscribedToScene = false;
-            }
             if (_isControllerStarted)
                 _controller.Stop();
         }

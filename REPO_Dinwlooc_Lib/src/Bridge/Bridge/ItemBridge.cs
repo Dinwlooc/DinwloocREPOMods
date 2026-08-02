@@ -1,6 +1,6 @@
-﻿// Dinwlooc.Common/Bridge/ItemBridge.cs
-using System;
+﻿using System;
 using System.Reflection;
+using Dinwlooc.Common.Core;
 using Dinwlooc.Common.IBridge;
 using Dinwlooc.Common.Reflection;
 using Photon.Pun;
@@ -8,17 +8,17 @@ using UnityEngine;
 
 namespace Dinwlooc.Common.Bridge
 {
-    public class ItemBridge : IItemBridge, IHealthPackBridge
+    public class ItemBridge : BridgeSingleton<ItemBridge>, IItemBridge, IHealthPackBridge
     {
-        private static ItemBridge? _instance;
-        public static ItemBridge Instance => _instance ??= new ItemBridge();
+        private const float DefaultHealAmount = 0;
+
         private ItemBridge() { }
 
         // ---------- IItemBridge ----------
-        public ItemBattery? GetHeldItemBattery(PlayerAvatar player)
+        public ItemBattery GetHeldItemBattery(PlayerAvatar player)
         {
             if (player?.physGrabber == null) return null;
-            Rigidbody? grabbed = player.physGrabber.grabbedObject;
+            Rigidbody grabbed = player.physGrabber.grabbedObject;
             if (grabbed == null) return null;
             return grabbed.GetComponent<ItemBattery>();
         }
@@ -45,23 +45,19 @@ namespace Dinwlooc.Common.Bridge
             battery.SetBatteryLife(newLife);
         }
 
-        /// <summary>
-        /// 获取玩家手持物品的 EnemyValuable 组件。
-        /// grabbedObject 是 Rigidbody，直接获取其上的 EnemyValuable 组件。
-        /// </summary>
-        public EnemyValuable? GetHeldValuable(PlayerAvatar player)
+        public EnemyValuable GetHeldValuable(PlayerAvatar player)
         {
             if (player?.physGrabber == null) return null;
-            Rigidbody? grabbed = player.physGrabber.grabbedObject;
+            Rigidbody grabbed = player.physGrabber.grabbedObject;
             if (grabbed == null) return null;
             return grabbed.GetComponent<EnemyValuable>();
         }
 
         // ---------- IHealthPackBridge ----------
-        public ItemHealthPack? FindNearestHealthPack(Vector3 position, float radius)
+        public ItemHealthPack FindNearestHealthPack(Vector3 position, float radius)
         {
             if (ItemManager.instance == null) return null;
-            ItemHealthPack? nearest = null;
+            ItemHealthPack nearest = null;
             float nearestDist = radius;
             foreach (ItemAttributes item in ItemManager.instance.spawnedItems)
             {
@@ -85,7 +81,10 @@ namespace Dinwlooc.Common.Bridge
             FieldInfo usedField = ReflectionCache.ItemHealthPack_used;
             if (usedField != null)
             {
-                try { if ((bool)usedField.GetValue(healthPack)) return false; }
+                try
+                {
+                    if ((bool)usedField.GetValue(healthPack)) return false;
+                }
                 catch { /* 忽略 */ }
             }
             return true;
@@ -111,7 +110,6 @@ namespace Dinwlooc.Common.Bridge
                     catch { /* 忽略 */ }
                 }
 
-                // 触发原版 UsedRPC
                 MethodInfo usedRPCMethod = ReflectionCache.ItemHealthPack_UsedRPC;
                 if (SemiFunc.IsMultiplayer() && healthPack.photonView != null)
                 {
@@ -123,7 +121,6 @@ namespace Dinwlooc.Common.Bridge
                     catch { /* 降级处理 */ }
                 }
 
-                // 禁用 ItemToggle（保险）
                 FieldInfo itemToggleField = ReflectionCache.ItemHealthPack_itemToggle;
                 if (itemToggleField != null)
                 {

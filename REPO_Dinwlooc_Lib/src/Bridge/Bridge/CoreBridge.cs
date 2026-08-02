@@ -1,6 +1,6 @@
-﻿// Dinwlooc.Common/Bridge/CoreBridge.cs
-using System;
+﻿using System;
 using System.Reflection;
+using Dinwlooc.Common.Core;
 using Dinwlooc.Common.IBridge;
 using Dinwlooc.Common.Reflection;
 using Photon.Pun;
@@ -9,16 +9,14 @@ using UnityEngine.SceneManagement;
 
 namespace Dinwlooc.Common.Bridge
 {
-    public class CoreBridge :
+    public class CoreBridge : BridgeSingleton<CoreBridge>,
         IGameStateBridge,
         ISaveLoadBridge,
         INetworkBridge
     {
-        private static CoreBridge? _instance;
-        public static CoreBridge Instance => _instance ??= new CoreBridge();
         private CoreBridge() { }
 
-        // ---------- IGameStateBridge（带异常保护） ----------
+        // ---------- IGameStateBridge ----------
         public bool IsMasterClientOrSingleplayer()
         {
             try
@@ -27,8 +25,8 @@ namespace Dinwlooc.Common.Bridge
             }
             catch (Exception ex)
             {
-                Core.CommonPlugin.Logger.LogWarning($"IsMasterClientOrSingleplayer failed (early init?), defaulting to true: {ex.Message}");
-                return true; // 安全默认值，允许本地操作
+                CommonPlugin.Logger.LogWarning($"IsMasterClientOrSingleplayer failed (early init?), defaulting to true: {ex.Message}");
+                return true;
             }
         }
 
@@ -52,7 +50,7 @@ namespace Dinwlooc.Common.Bridge
             }
             catch
             {
-                return true; // 不确定时认为处于过渡状态
+                return true;
             }
         }
 
@@ -69,7 +67,7 @@ namespace Dinwlooc.Common.Bridge
         }
 
         // ---------- ISaveLoadBridge ----------
-        public string? GetCurrentSaveFileName()
+        public string GetCurrentSaveFileName()
         {
             try
             {
@@ -78,14 +76,19 @@ namespace Dinwlooc.Common.Bridge
                 FieldInfo field = ReflectionCache.StatsManager_saveFileCurrent;
                 return field?.GetValue(stats) as string;
             }
-            catch { return null; }
+            catch
+            {
+                return null;
+            }
         }
 
         public void LoadCurrentSave()
         {
-            string? fileName = GetCurrentSaveFileName();
+            string fileName = GetCurrentSaveFileName();
             if (!string.IsNullOrEmpty(fileName))
+            {
                 SemiFunc.SaveFileLoad(fileName, null);
+            }
         }
 
         public void SaveCurrentProgress() => SemiFunc.SaveFileSave();
@@ -99,9 +102,13 @@ namespace Dinwlooc.Common.Bridge
             }
             string sceneName = SceneManager.GetActiveScene().name;
             if (SemiFunc.IsMultiplayer())
+            {
                 PhotonNetwork.LoadLevel(sceneName);
+            }
             else
+            {
                 SceneManager.LoadScene(sceneName);
+            }
         }
 
         public void ChangeToShop()
@@ -119,7 +126,9 @@ namespace Dinwlooc.Common.Bridge
             if (PhotonNetwork.IsConnected && PhotonNetwork.InRoom && PhotonNetwork.IsMasterClient)
             {
                 if (PunManager.instance != null)
+                {
                     PunManager.instance.SyncAllDictionaries();
+                }
             }
         }
     }

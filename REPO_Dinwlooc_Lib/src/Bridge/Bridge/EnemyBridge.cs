@@ -1,16 +1,21 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Reflection;
+using Dinwlooc.Common.Core;
 using Dinwlooc.Common.IBridge;
 using Dinwlooc.Common.Reflection;
 using UnityEngine;
 
 namespace Dinwlooc.Common.Bridge
 {
-    public class EnemyBridge : IEnemyBridge
+    public class EnemyBridge : BridgeSingleton<EnemyBridge>, IEnemyBridge
     {
-        private static EnemyBridge? _instance;
-        public static EnemyBridge Instance => _instance ??= new EnemyBridge();
+        private const float DefaultHeightOffset = 0.5f;
+        private const float MinHeightOffset = 0.3f;
+        private const float MaxHeightOffset = 5f;
+        private const float FallbackScaleFactor = 0.8f;
+        private const float BoundsExtra = 0.15f;
+
         private EnemyBridge() { }
 
         public IReadOnlyList<EnemyParent> GetAllEnemies()
@@ -30,30 +35,13 @@ namespace Dinwlooc.Common.Bridge
 
         public bool IsEnemyValid(EnemyParent enemy)
         {
-            if (enemy == null)
-            {
-                return false;
-            }
-            if (!enemy.Spawned)
-            {
-                return false;
-            }
-            if (enemy.Enemy == null)
-            {
-                return false;
-            }
-            if (enemy.Enemy.Health == null)
-            {
-                return false;
-            }
-            if (enemy.Enemy.Health.health <= 0)
-            {
-                return false;
-            }
-            if (!enemy.Enemy.gameObject.activeInHierarchy)
-            {
-                return false;
-            }
+            if (enemy == null) return false;
+            if (!enemy.Spawned) return false;
+            if (enemy.Enemy == null) return false;
+            EnemyHealth health = enemy.Enemy.Health;
+            if (health == null) return false;
+            if (health.health <= 0) return false;
+            if (!enemy.Enemy.gameObject.activeInHierarchy) return false;
             return true;
         }
 
@@ -86,10 +74,7 @@ namespace Dinwlooc.Common.Bridge
 
         public void ApplyHighlight(EnemyParent enemy, bool active, Color color)
         {
-            if (enemy == null || enemy.EnableObject == null)
-            {
-                return;
-            }
+            if (enemy == null || enemy.EnableObject == null) return;
 
             GameObject enableObj = enemy.EnableObject;
             Transform modelTransform = enableObj.transform.Find("[VISUALS]");
@@ -106,19 +91,10 @@ namespace Dinwlooc.Common.Bridge
             Renderer[] renderers = modelTarget.GetComponentsInChildren<Renderer>(true);
             foreach (Renderer rend in renderers)
             {
-                if (rend == null)
-                {
-                    continue;
-                }
-                if (rend.GetComponent<ParticleSystem>() != null)
-                {
-                    continue;
-                }
+                if (rend == null) continue;
+                if (rend.GetComponent<ParticleSystem>() != null) continue;
                 Material mat = rend.material;
-                if (!mat.HasProperty("_EmissionColor"))
-                {
-                    continue;
-                }
+                if (!mat.HasProperty("_EmissionColor")) continue;
 
                 if (active)
                 {
@@ -137,14 +113,14 @@ namespace Dinwlooc.Common.Bridge
         {
             if (enemy?.Enemy == null)
             {
-                return 0.5f;
+                return DefaultHeightOffset;
             }
             Enemy enemyComp = enemy.Enemy;
 
             FieldInfo rigidField = ReflectionCache.Enemy_Rigidbody;
             try
             {
-                EnemyRigidbody? rigid = rigidField?.GetValue(enemyComp) as EnemyRigidbody;
+                EnemyRigidbody rigid = rigidField?.GetValue(enemyComp) as EnemyRigidbody;
                 if (rigid != null)
                 {
                     Collider[] colliders = rigid.GetComponentsInChildren<Collider>();
@@ -153,10 +129,7 @@ namespace Dinwlooc.Common.Bridge
                     bool hasBounds = false;
                     foreach (Collider col in colliders)
                     {
-                        if (col == null || col.isTrigger)
-                        {
-                            continue;
-                        }
+                        if (col == null || col.isTrigger) continue;
                         if (!hasBounds)
                         {
                             bounds = col.bounds;
@@ -169,8 +142,8 @@ namespace Dinwlooc.Common.Bridge
                     }
                     if (hasBounds)
                     {
-                        float height = bounds.max.y - center.y + 0.15f;
-                        return Mathf.Clamp(height, 0.3f, 5f);
+                        float height = bounds.max.y - center.y + BoundsExtra;
+                        return Mathf.Clamp(height, MinHeightOffset, MaxHeightOffset);
                     }
                 }
             }
@@ -187,13 +160,13 @@ namespace Dinwlooc.Common.Bridge
                     Renderer renderer = model.GetComponentInChildren<Renderer>();
                     if (renderer != null)
                     {
-                        float height = renderer.bounds.size.y * 0.8f;
-                        return Mathf.Clamp(height, 0.3f, 3f);
+                        float height = renderer.bounds.size.y * FallbackScaleFactor;
+                        return Mathf.Clamp(height, MinHeightOffset, MaxHeightOffset);
                     }
                     float scaleY = model.lossyScale.y;
                     if (scaleY > 0.5f)
                     {
-                        return Mathf.Clamp(scaleY * 0.8f, 0.3f, 3f);
+                        return Mathf.Clamp(scaleY * FallbackScaleFactor, MinHeightOffset, MaxHeightOffset);
                     }
                 }
             }
@@ -202,7 +175,7 @@ namespace Dinwlooc.Common.Bridge
                 // 忽略异常
             }
 
-            return 0.5f;
+            return DefaultHeightOffset;
         }
     }
 }

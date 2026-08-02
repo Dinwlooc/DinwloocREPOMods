@@ -2,15 +2,11 @@
 using System.Collections.Generic;
 using System.IO;
 using Dinwlooc.Common.Caching;
-using Dinwlooc.Common.Reflection;
+using Photon.Pun;
 using PhotonHashtable = ExitGames.Client.Photon.Hashtable;
 
 namespace Dinwlooc.Common.Sync
 {
-    /// <summary>
-    /// 同步缓存实现，包装 <see cref="MemoryCache{TKey,TValue}"/> 提供存储，
-    /// 附加网络同步事件和远程操作支持。
-    /// </summary>
     internal class SyncCache<TKey, TValue> : ISyncCache<TKey, TValue>
         where TKey : notnull
     {
@@ -19,6 +15,8 @@ namespace Dinwlooc.Common.Sync
         private readonly SyncMode _mode;
         private readonly Func<TValue, TValue, TValue>? _mergeFunc;
         private readonly ISerializationStrategy<TValue> _serializationStrategy;
+        private readonly bool _allowFullUpdateRequest;
+        private object? _version;
 
         public event Action<TKey, TValue>? OnDataChanged;
         public event Action<TKey>? OnDataRemoved;
@@ -27,17 +25,26 @@ namespace Dinwlooc.Common.Sync
         public string CacheName => _cacheName;
         public SyncMode Mode => _mode;
         public bool UseBinarySerialization => _serializationStrategy is BinaryStrategy<TValue>;
+        public bool AllowFullUpdateRequest => _allowFullUpdateRequest;
+        public object? Version
+        {
+            get => _version;
+            set => _version = value;
+        }
 
         internal SyncCache(
             string cacheName,
             SyncMode mode,
             Func<TValue, TValue, TValue>? mergeFunc = null,
             Action<BinaryWriter, TValue>? serialize = null,
-            Func<BinaryReader, TValue>? deserialize = null)
+            Func<BinaryReader, TValue>? deserialize = null,
+            bool allowFullUpdateRequest = true)
         {
             _cacheName = cacheName;
             _mode = mode;
             _mergeFunc = mergeFunc;
+            _allowFullUpdateRequest = allowFullUpdateRequest;
+            _version = null;
 
             _localCache = new MemoryCache<TKey, TValue>();
 
@@ -47,7 +54,6 @@ namespace Dinwlooc.Common.Sync
                 _serializationStrategy = new HashtableStrategy<TValue>();
         }
 
-        // ---- ICacheProvider 实现（全部委托给 _localCache） ----
         public bool TryGet(TKey key, out TValue value) => _localCache.TryGet(key, out value);
 
         public void Set(TKey key, TValue value, TimeSpan? expiration = null)
@@ -72,7 +78,6 @@ namespace Dinwlooc.Common.Sync
 
         public void Refresh(TKey key) => _localCache.Refresh(key);
 
-        // ---- 同步特有方法 ----
         internal void ApplyMerge(TKey key, TValue incomingVal)
         {
             if (_localCache.TryGet(key, out TValue currentVal) && _mergeFunc != null)
@@ -95,13 +100,29 @@ namespace Dinwlooc.Common.Sync
             return snapshot;
         }
 
-        // ---- ISyncCache 显式实现（远程操作，不触发本地事件） ----
+        /// <summary>
+        /// 尝试获取二进制格式的快照。
+        /// </summary>
+        public bool TryGetSnapshotBinary(out Dictionary<object, byte[]> snapshot)
+        {
+            snapshot = new Dictionary<object, byte[]>();
+            if (!UseBinarySerialization)
+                return false;
+
+            IReadOnlyDictionary<TKey, TValue> all = _localCache.GetAllItems();
+            foreach (KeyValuePair<TKey, TValue> kv in all)
+            {
+                snapshot[kv.Key] = SerializeToBinary(kv.Value);
+            }
+            return true;
+        }
+
         void ISyncCache.ApplyRemoteSetObject(object keyObj, object valObj)
         {
             try
             {
-                object? convertedKey = ReflectionCache.ChangeType(keyObj, typeof(TKey));
-                object? convertedVal = ReflectionCache.ChangeType(valObj, typeof(TValue));
+                object? convertedKey = Dinwlooc.Common.Reflection.ReflectionCache.ChangeType(keyObj, typeof(TKey));
+                object? convertedVal = Dinwlooc.Common.Reflection.ReflectionCache.ChangeType(valObj, typeof(TValue));
                 if (convertedKey == null || convertedVal == null)
                 {
                     Core.CommonPlugin.Logger.LogError($"ApplyRemoteSetObject 转换失败：键或值为 null");
@@ -121,7 +142,7 @@ namespace Dinwlooc.Common.Sync
         {
             try
             {
-                object? convertedKey = ReflectionCache.ChangeType(keyObj, typeof(TKey));
+                object? convertedKey = Dinwlooc.Common.Reflection.ReflectionCache.ChangeType(keyObj, typeof(TKey));
                 if (convertedKey == null)
                 {
                     Core.CommonPlugin.Logger.LogError($"ApplyRemoteSetBinary 键转换失败：{keyObj}");
@@ -141,7 +162,7 @@ namespace Dinwlooc.Common.Sync
         {
             try
             {
-                object? convertedKey = ReflectionCache.ChangeType(keyObj, typeof(TKey));
+                object? convertedKey = Dinwlooc.Common.Reflection.ReflectionCache.ChangeType(keyObj, typeof(TKey));
                 if (convertedKey != null)
                     _localCache.Remove((TKey)convertedKey);
             }
@@ -157,8 +178,8 @@ namespace Dinwlooc.Common.Sync
         {
             try
             {
-                object? convertedKey = ReflectionCache.ChangeType(keyObj, typeof(TKey));
-                object? convertedVal = ReflectionCache.ChangeType(valObj, typeof(TValue));
+                object? convertedKey = Dinwlooc.Common.Reflection.ReflectionCache.ChangeType(keyObj, typeof(TKey));
+                object? convertedVal = Dinwlooc.Common.Reflection.ReflectionCache.ChangeType(valObj, typeof(TValue));
                 if (convertedKey == null || convertedVal == null)
                 {
                     Core.CommonPlugin.Logger.LogError($"ProcessMergeObject 转换失败");
@@ -176,7 +197,7 @@ namespace Dinwlooc.Common.Sync
         {
             try
             {
-                object? convertedKey = ReflectionCache.ChangeType(keyObj, typeof(TKey));
+                object? convertedKey = Dinwlooc.Common.Reflection.ReflectionCache.ChangeType(keyObj, typeof(TKey));
                 if (convertedKey == null)
                 {
                     Core.CommonPlugin.Logger.LogError($"ProcessMergeBinary 键转换失败");
@@ -192,5 +213,33 @@ namespace Dinwlooc.Common.Sync
         }
 
         void ISyncCache.SyncNow() { /* 预留 */ }
+
+        public void RequestFullUpdate(object? version = null)
+        {
+            if (!_allowFullUpdateRequest)
+            {
+                Core.CommonPlugin.Logger.LogWarning($"缓存 '{_cacheName}' 不允许请求全量更新。");
+                return;
+            }
+            if (!PhotonNetwork.IsConnected || !PhotonNetwork.InRoom)
+            {
+                Core.CommonPlugin.Logger.LogWarning($"网络未就绪，无法请求全量更新。");
+                return;
+            }
+            if (PhotonNetwork.IsMasterClient)
+            {
+                Core.CommonPlugin.Logger.LogInfo($"房主无需请求全量更新。");
+                return;
+            }
+
+            ExitGames.Client.Photon.Hashtable request = new ExitGames.Client.Photon.Hashtable
+            {
+                ["type"] = "SyncCacheFullUpdateRequest",
+                ["cacheName"] = _cacheName,
+                ["version"] = version ?? 0
+            };
+            SyncRpcModule.SendCustomRequest(request);
+            Core.CommonPlugin.Logger.LogInfo($"已发送全量更新请求（缓存：{_cacheName}，版本：{version ?? 0}）");
+        }
     }
 }
