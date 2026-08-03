@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿// Dinwlooc.Common/Core/PlayerReviveEventGenerator.cs
+using System.Collections.Generic;
 using Dinwlooc.Common.Bridge;
 using Dinwlooc.Common.Events;
 using Dinwlooc.Common.IBridge;
@@ -8,7 +9,9 @@ namespace Dinwlooc.Common.Core
 {
     public class PlayerReviveEventGenerator : EventGeneratorBase<PlayerRevivedEvent>
     {
-        private static PlayerReviveEventGenerator? _instance;
+        private const int DEAD_HEALTH_THRESHOLD = 0;
+
+        private static PlayerReviveEventGenerator _instance;
         public static PlayerReviveEventGenerator Instance
         {
             get
@@ -23,7 +26,7 @@ namespace Dinwlooc.Common.Core
             }
         }
 
-        private IPlayerBridge _playerBridge = null!;
+        private IPlayerBridge _playerBridge = null;
         private Dictionary<int, int> _lastHealth = new Dictionary<int, int>();
         private Dictionary<int, int> _currentHealth = new Dictionary<int, int>();
 
@@ -36,12 +39,14 @@ namespace Dinwlooc.Common.Core
             }
             _instance = this;
             DontDestroyOnLoad(gameObject);
+
             _playerBridge = BridgeLocator.Player;
         }
 
         protected override void GenerateEvent()
         {
-            if (!SemiFunc.RunIsLevel()) return;
+            if (!SemiFunc.RunIsLevel())
+                return;
 
             List<PlayerAvatar> players = _playerBridge.GetAllPlayers();
             if (players == null || players.Count == 0)
@@ -51,28 +56,27 @@ namespace Dinwlooc.Common.Core
             }
 
             _currentHealth.Clear();
-            foreach (PlayerAvatar p in players)
+            foreach (PlayerAvatar player in players)
             {
-                if (p == null) continue;
-                int id = p.GetInstanceID();
-                int health = p.playerHealth?.health ?? 0;
-                _currentHealth[id] = health;
+                if (player == null)
+                    continue;
+                int instanceId = player.GetInstanceID();
+                int health = player.playerHealth?.health ?? DEAD_HEALTH_THRESHOLD;
+                _currentHealth[instanceId] = health;
             }
 
             foreach (KeyValuePair<int, int> kv in _currentHealth)
             {
                 int id = kv.Key;
                 int current = kv.Value;
-                if (_lastHealth.TryGetValue(id, out int last))
+                if (!_lastHealth.TryGetValue(id, out int last))
+                    continue;
+
+                if (last <= DEAD_HEALTH_THRESHOLD && current > DEAD_HEALTH_THRESHOLD)
                 {
-                    if (last <= 0 && current > 0)
-                    {
-                        PlayerAvatar? player = players.Find(p => p != null && p.GetInstanceID() == id);
-                        if (player != null)
-                        {
-                            EventBus.Publish(new PlayerRevivedEvent(player));
-                        }
-                    }
+                    PlayerAvatar player = players.Find(p => p != null && p.GetInstanceID() == id);
+                    if (player != null)
+                        EventBus.Publish(new PlayerRevivedEvent(player));
                 }
             }
 

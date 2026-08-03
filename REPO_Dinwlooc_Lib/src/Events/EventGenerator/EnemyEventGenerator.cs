@@ -57,7 +57,7 @@ namespace Dinwlooc.Common.Core
             _gameState = BridgeLocator.GameState;
             _enemyBridge = BridgeLocator.Enemy;
             _isInitialized = true;
-            CommonPlugin.Logger.LogInfo("EnemyEventGenerator created (idle).");
+            CommonPlugin.Logger.LogInfo("[EnemyEventGenerator] created (idle).");
         }
 
         // 场景切换事件处理（替代 OnSceneLoaded）
@@ -68,7 +68,7 @@ namespace Dinwlooc.Common.Core
                 return;
             // 清空已挂载 ID 缓存，因为怪物实例已重置
             _attachedEnemyIds.Clear();
-            CommonPlugin.Logger.LogInfo($"EnemyEventGenerator 清空已挂载 ID 缓存（关卡加载：{evt.SceneName}）。");
+            CommonPlugin.Logger.LogInfo($"[EnemyEventGenerator] 清空已挂载 ID 缓存（关卡加载：{evt.SceneName}）。");
         }
 
         protected override void GenerateEvent()
@@ -109,7 +109,7 @@ namespace Dinwlooc.Common.Core
             }
             // 仅在成功挂载时输出汇总日志（若没有新挂载则静默）
             if (attachedCount > 0)
-                CommonPlugin.Logger.LogInfo($"Attached {attachedCount} EnemyEventRelay(s).");
+                CommonPlugin.Logger.LogInfo($"[EnemyEventGenerator] Attached {attachedCount} EnemyEventRelay(s).");
             // 清理已不存在的怪物 ID
             _attachedEnemyIds.RemoveWhere(id => !currentEnemyIds.Contains(id));
         }

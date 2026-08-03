@@ -2,10 +2,9 @@
 namespace Dinwlooc.Common.Events
 {
     /// <summary>
-    /// 网络就绪事件，在成功加入 Photon 房间后发布（仅本地）。
-    /// 由 SyncManager 在 OnJoinedRoom 中触发。
+    /// 同步器就绪事件。
     /// </summary>
-    public readonly struct NetworkReadyEvent
+    public readonly struct SyncReadyEvent
     {
         // 纯标记事件，无数据成员
     }

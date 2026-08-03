@@ -127,7 +127,7 @@ namespace Dinwlooc.Common.Sync
             _hasBroadcastedForRoom = false;
             Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 网络就绪（加入房间）。");
 
-            EventBus.Publish(new NetworkReadyEvent());
+            EventBus.Publish(new SyncReadyEvent());
         }
 
         public override void OnLeftRoom()

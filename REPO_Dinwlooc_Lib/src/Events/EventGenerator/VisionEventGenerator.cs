@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿// Dinwlooc.Common/Core/VisionEventGenerator.cs
+using System.Collections.Generic;
 using Dinwlooc.Common.Bridge;
 using Dinwlooc.Common.Events;
 using Dinwlooc.Common.IBridge;
@@ -8,14 +9,16 @@ namespace Dinwlooc.Common.Core
 {
     public class VisionEventGenerator : EventGeneratorBase<MonsterVisibilityChangedEvent>
     {
-        private static VisionEventGenerator? _instance;
+        private const float VISION_RANGE = 999f;
+
+        private static VisionEventGenerator _instance;
         public static VisionEventGenerator Instance
         {
             get
             {
                 if (_instance == null)
                 {
-                    var go = new GameObject(nameof(VisionEventGenerator));
+                    GameObject go = new GameObject(nameof(VisionEventGenerator));
                     DontDestroyOnLoad(go);
                     _instance = go.AddComponent<VisionEventGenerator>();
                 }
@@ -23,9 +26,9 @@ namespace Dinwlooc.Common.Core
             }
         }
 
-        private IEnemyBridge _enemyBridge = null!;
-        private IPlayerBridge _playerBridge = null!;
-        private HashSet<int> _previousSeen = new();
+        private IEnemyBridge _enemyBridge = null;
+        private IPlayerBridge _playerBridge = null;
+        private HashSet<int> _previousSeen = new HashSet<int>();
 
         private void Awake()
         {
@@ -36,15 +39,17 @@ namespace Dinwlooc.Common.Core
             }
             _instance = this;
             DontDestroyOnLoad(gameObject);
+
             _enemyBridge = BridgeLocator.Enemy;
             _playerBridge = BridgeLocator.Player;
         }
 
         protected override void GenerateEvent()
         {
-            if (!SemiFunc.RunIsLevel()) return;
+            if (!SemiFunc.RunIsLevel())
+                return;
 
-            var localPlayer = _playerBridge.GetLocalPlayer();
+            PlayerAvatar localPlayer = _playerBridge.GetLocalPlayer();
             if (localPlayer == null || localPlayer.isDisabled)
             {
                 if (_previousSeen.Count > 0)
@@ -56,36 +61,35 @@ namespace Dinwlooc.Common.Core
                 return;
             }
 
-            var allEnemies = _enemyBridge.GetAllEnemies();
+            IReadOnlyList<EnemyParent> allEnemies = _enemyBridge.GetAllEnemies();
             if (allEnemies == null || allEnemies.Count == 0)
-            {
-                // 无敌人时不清除 _previousSeen（避免重复发布）
                 return;
-            }
 
-            var seenIDs = new List<int>();
-            foreach (var ep in allEnemies)
+            List<int> seenIDs = new List<int>();
+            foreach (EnemyParent ep in allEnemies)
             {
-                if (!_enemyBridge.IsEnemyValid(ep)) continue;
+                if (!_enemyBridge.IsEnemyValid(ep))
+                    continue;
                 Vector3 enemyPos = _enemyBridge.GetEnemyPosition(ep);
-                if (SemiFunc.PlayerVisionCheck(enemyPos, 999f, localPlayer, false))
+                if (SemiFunc.PlayerVisionCheck(enemyPos, VISION_RANGE, localPlayer, false))
                 {
                     seenIDs.Add(_enemyBridge.GetEnemyInstanceId(ep));
                 }
             }
 
-            HashSet<int> newSet = new(seenIDs);
-            if (!_previousSeen.SetEquals(newSet))
-            {
-                foreach (int id in newSet)
-                    if (!_previousSeen.Contains(id))
-                        EventBus.Publish(new MonsterVisibilityChangedEvent(id, true));
-                foreach (int id in _previousSeen)
-                    if (!newSet.Contains(id))
-                        EventBus.Publish(new MonsterVisibilityChangedEvent(id, false));
+            HashSet<int> newSet = new HashSet<int>(seenIDs);
+            if (_previousSeen.SetEquals(newSet))
+                return;
 
-                _previousSeen = newSet;
-            }
+            foreach (int id in newSet)
+                if (!_previousSeen.Contains(id))
+                    EventBus.Publish(new MonsterVisibilityChangedEvent(id, true));
+
+            foreach (int id in _previousSeen)
+                if (!newSet.Contains(id))
+                    EventBus.Publish(new MonsterVisibilityChangedEvent(id, false));
+
+            _previousSeen = newSet;
         }
     }
 }
