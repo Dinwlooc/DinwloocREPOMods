@@ -66,7 +66,6 @@ namespace Dinwlooc.Common.Core
             // 只在关卡场景加载时清空（排除主菜单、商店、过渡场景等）
             if (evt.Type != SceneType.Level)
                 return;
-
             // 清空已挂载 ID 缓存，因为怪物实例已重置
             _attachedEnemyIds.Clear();
             CommonPlugin.Logger.LogInfo($"EnemyEventGenerator 清空已挂载 ID 缓存（关卡加载：{evt.SceneName}）。");
@@ -77,15 +76,11 @@ namespace Dinwlooc.Common.Core
             // 仅在主机/单机模式下运行
             if (!SemiFunc.IsMasterClientOrSingleplayer())
                 return;
-
             if (!_isInitialized || _gameState == null || _enemyBridge == null)
                 return;
-
             // 只在关卡中运行
             if (_gameState.IsMainMenu() || !_gameState.IsLevelLoaded())
                 return;
-
-            // 执行扫描
             IReadOnlyList<EnemyParent> allEnemies = _enemyBridge.GetAllEnemies();
             if (allEnemies == null || allEnemies.Count == 0)
             {
@@ -93,27 +88,29 @@ namespace Dinwlooc.Common.Core
                     _attachedEnemyIds.Clear();
                 return;
             }
-
             HashSet<int> currentEnemyIds = new HashSet<int>();
+            int attachedCount = 0;  // 新增：统计成功挂载的数量
             foreach (EnemyParent ep in allEnemies)
             {
                 if (ep == null || ep.Enemy == null)
                     continue;
                 int id = ep.GetInstanceID();
                 currentEnemyIds.Add(id);
-
                 if (!_attachedEnemyIds.Contains(id))
                 {
                     GameObject enemyGO = ep.Enemy.gameObject;
                     if (enemyGO.GetComponent<EnemyEventRelay>() == null)
                     {
                         enemyGO.AddComponent<EnemyEventRelay>();
-                        CommonPlugin.Logger.LogInfo($"Attached EnemyEventRelay to {ep.name} (ID:{id})");
+                        attachedCount++;  // 只计数，不逐条打印日志
                     }
                     _attachedEnemyIds.Add(id);
                 }
             }
-
+            // 仅在成功挂载时输出汇总日志（若没有新挂载则静默）
+            if (attachedCount > 0)
+                CommonPlugin.Logger.LogInfo($"Attached {attachedCount} EnemyEventRelay(s).");
+            // 清理已不存在的怪物 ID
             _attachedEnemyIds.RemoveWhere(id => !currentEnemyIds.Contains(id));
         }
 

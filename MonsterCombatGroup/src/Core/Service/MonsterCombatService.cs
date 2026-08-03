@@ -46,7 +46,7 @@ namespace MonsterCombatGroup
 
             PhotonNetwork.AddCallbackTarget(this);
 
-            // 订阅场景切换事件（替代 Unity 原生 sceneLoaded）
+            // 订阅场景切换事件
             if (!_subscribed)
             {
                 EventBus.Subscribe<SceneChangedEvent>(OnSceneChanged);
@@ -73,7 +73,6 @@ namespace MonsterCombatGroup
             }
         }
 
-        // 场景切换事件处理（替代 OnSceneLoaded）
         private void OnSceneChanged(SceneChangedEvent evt)
         {
             // 只在关卡或大厅场景重置（排除主菜单、商店、过渡场景等）
@@ -87,6 +86,17 @@ namespace MonsterCombatGroup
             {
                 if (handler is IResettable resettable)
                     resettable.ResetState();
+            }
+
+            // 清空同步缓存（房主）
+            MonsterSyncManager.ClearState();
+
+            // 所有客户端（包括房主）在进入关卡时初始化同步缓存
+            // 这会触发 CacheManager.GetOrCreateSyncCache，自动处理网络就绪和全量同步
+            if (evt.Type == SceneType.Level)
+            {
+                MonsterSyncManager.EnsureInitialized();
+                MonsterCombatGroup.Logger.LogInfo("MonsterSyncManager 已为当前关卡初始化。");
             }
         }
 
@@ -112,6 +122,9 @@ namespace MonsterCombatGroup
                 _handlers.Clear();
                 _isInitialized = false;
             }
+
+            // 重置同步管理器
+            MonsterSyncManager.Reset();
         }
     }
 

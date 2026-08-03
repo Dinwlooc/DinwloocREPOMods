@@ -22,7 +22,7 @@ namespace MonsterCombatGroup.Handler
         private readonly Dictionary<int, int> _baseHealthCache = new Dictionary<int, int>();
         private bool _subscribed = false;
 
-        // 新增：上次选举成功的时间戳（用于冷却）
+        // 上次选举成功的时间戳（用于全局冷却）
         private float _lastElectionTime = -float.MaxValue;
 
         public LeaderElectionHandler()
@@ -100,16 +100,26 @@ namespace MonsterCombatGroup.Handler
             LeaderState.AddGuard(guard1Id);
             LeaderState.AddGuard(guard2Id);
 
+            // 计算新最大血量
+            int baseHealthLeader = GetBaseHealth(leader);
+            int baseHealthGuard1 = GetBaseHealth(guard1);
+            int baseHealthGuard2 = GetBaseHealth(guard2);
+
+            int newMaxLeader = (int)(baseHealthLeader * _leaderHealthMult);
+            int newMaxGuard1 = (int)(baseHealthGuard1 * _guardHealthMult);
+            int newMaxGuard2 = (int)(baseHealthGuard2 * _guardHealthMult);
+
+            // 同步最大血量到所有客户端（房主调用）
+            MonsterSyncManager.UpdateMonsterMaxHealth(leader, newMaxLeader);
+            MonsterSyncManager.UpdateMonsterMaxHealth(guard1, newMaxGuard1);
+            MonsterSyncManager.UpdateMonsterMaxHealth(guard2, newMaxGuard2);
+
+            // 设置当前血量（满血），由房主本地执行，游戏网络同步会传达当前血量
             if (_modifier != null)
             {
-                int baseHealthLeader = GetBaseHealth(leader);
-                _modifier.SetHealth(leader, (int)(baseHealthLeader * _leaderHealthMult));
-
-                int baseHealthGuard1 = GetBaseHealth(guard1);
-                _modifier.SetHealth(guard1, (int)(baseHealthGuard1 * _guardHealthMult));
-
-                int baseHealthGuard2 = GetBaseHealth(guard2);
-                _modifier.SetHealth(guard2, (int)(baseHealthGuard2 * _guardHealthMult));
+                _modifier.SetHealth(leader, newMaxLeader);
+                _modifier.SetHealth(guard1, newMaxGuard1);
+                _modifier.SetHealth(guard2, newMaxGuard2);
             }
 
             // 记录选举成功时间

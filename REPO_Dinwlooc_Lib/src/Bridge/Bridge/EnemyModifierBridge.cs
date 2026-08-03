@@ -16,7 +16,6 @@ namespace Dinwlooc.Common.Bridge
 
         public void SetHealth(EnemyParent enemy, int newHealth)
         {
-            if (!SemiFunc.IsMasterClientOrSingleplayer()) return;
             if (enemy == null || enemy.Enemy == null) return;
 
             EnemyHealth health = enemy.Enemy.Health;
