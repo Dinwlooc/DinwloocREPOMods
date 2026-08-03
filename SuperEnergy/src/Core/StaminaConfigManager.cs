@@ -33,18 +33,23 @@ namespace SuperEnergy
         private const float SYNC_TIMEOUT_SECONDS = 5f;
 
         private ISyncCache<string, StaminaSyncConfig>? _syncCache;
+        private bool _hasSubscribedToDataChanged = false;
 
-        private bool _isWaitingForSync;
-        private float _syncWaitStartTime;
-        private bool _hasReceivedSyncData;
-        private bool _hasRequestedAndTimedOut;
-        private int _localVersion;
-        private bool _hasPushedForRoom;
-
-        protected override void Awake()
+        private enum SyncState
         {
-            base.Awake();
+            None,
+            WaitingForHost,
+            Received,
+            TimedOut
+        }
+        private SyncState _syncState = SyncState.None;
+        private float _syncWaitStartTime = 0f;
+        private int _localVersion = 0;
+        private bool _hasPushedForRoom = false;
+        private string _currentRoomIdentifier = "";
 
+        protected void Awake()
+        {
             if (_instance != null && _instance != this)
             {
                 Destroy(gameObject);
@@ -53,83 +58,42 @@ namespace SuperEnergy
             _instance = this;
             DontDestroyOnLoad(gameObject);
 
-            _localVersion = 0;
-            _hasPushedForRoom = false;
-
-            // 显式激活 SceneEventGenerator，确保场景事件发布
             _ = SceneEventGenerator.Instance;
-
-            // 订阅场景变化事件
             EventBus.Subscribe<SceneChangedEvent>(OnSceneChanged);
+
+            // 不再主动访问 SyncManager，懒加载由 CacheManager 触发
+
             SuperEnergy.Logger.LogInfo("配置管理器已初始化。");
         }
 
-        protected override void OnDestroy()
+        protected void OnDestroy()
         {
             EventBus.Unsubscribe<SceneChangedEvent>(OnSceneChanged);
-            base.OnDestroy();
+            UnsubscribeFromSyncEvents();
             _syncCache = null;
         }
+
         private void OnSceneChanged(SceneChangedEvent evt)
         {
-            // 仅在关卡场景处理
             if (evt.Type != SceneType.Level)
                 return;
-            if (PhotonNetwork.IsConnected && PhotonNetwork.InRoom)
-            {
-                bool useHost = SuperEnergyConfig.Instance.SyncUseHostConfig.Value;
-                if (useHost && PhotonNetwork.IsMasterClient)
-                {
-                    EnsureSyncCacheCreated();
-                    if (!_hasPushedForRoom)
-                    {
-                        PushCurrentConfigToCache();
-                    }
-                }
-                else if (useHost && !PhotonNetwork.IsMasterClient)
-                {
-                    EnsureSyncCacheCreated();
-                    if (!_isWaitingForSync && !_hasReceivedSyncData)
-                    {
-                        RequestConfigFromHost();
-                    }
-                    else
-                    {
-                        SuperEnergy.Logger.LogInfo($"客户端已处于等待（{_isWaitingForSync}）或已收到数据（{_hasReceivedSyncData}），跳过请求。");
-                    }
-                }
-            }
-            else
-            {
-                SuperEnergy.Logger.LogInfo("关卡加载时网络未就绪，延迟网络操作。");
-            }
+
+            // 直接尝试初始化，内部会通过创建缓存触发 SyncManager 实例化
+            TryInitializeSyncForCurrentRoom();
         }
 
         protected override void OnNetworkReady()
         {
-            if (!SemiFunc.RunIsLevel())
-                return;
+            base.OnNetworkReady();
+            SuperEnergy.Logger.LogInfo("网络就绪，尝试初始化同步。");
 
-            bool useHost = SuperEnergyConfig.Instance.SyncUseHostConfig.Value;
-            if (useHost && PhotonNetwork.IsMasterClient && PhotonNetwork.InRoom)
+            if (SemiFunc.RunIsLevel())
             {
-                EnsureSyncCacheCreated();
-                if (!_hasPushedForRoom)
-                {
-                    PushCurrentConfigToCache();
-                }
+                TryInitializeSyncForCurrentRoom();
             }
-            else if (useHost && !PhotonNetwork.IsMasterClient)
+            else
             {
-                EnsureSyncCacheCreated();
-                if (!_isWaitingForSync && !_hasReceivedSyncData)
-                {
-                    RequestConfigFromHost();
-                }
-                else
-                {
-                    SuperEnergy.Logger.LogInfo($"客户端已处于等待或已收到数据，跳过请求。");
-                }
+                SuperEnergy.Logger.LogInfo("网络就绪但非关卡场景，等待场景切换。");
             }
         }
 
@@ -139,49 +103,138 @@ namespace SuperEnergy
             base.OnLeftRoom();
         }
 
-        private void ResetRoomState()
+        private void TryInitializeSyncForCurrentRoom()
         {
-            _isWaitingForSync = false;
-            _hasReceivedSyncData = false;
-            _hasRequestedAndTimedOut = false;
-            _localVersion = 0;
-            _hasPushedForRoom = false;
+            if (!PhotonNetwork.InRoom)
+            {
+                SuperEnergy.Logger.LogInfo("未在房间中，延迟同步初始化。");
+                return;
+            }
+
+            string roomIdentifier = $"{PhotonNetwork.CurrentRoom?.Name}_{SceneManager.GetActiveScene().name}";
+            if (_currentRoomIdentifier == roomIdentifier)
+            {
+                SuperEnergy.Logger.LogInfo("当前房间已初始化过同步，跳过。");
+                return;
+            }
+            _currentRoomIdentifier = roomIdentifier;
+
+            bool useHost = SuperEnergyConfig.Instance.SyncUseHostConfig.Value;
+            if (!useHost)
+            {
+                SuperEnergy.Logger.LogInfo("同步配置未启用，跳过。");
+                return;
+            }
+
+            EnsureSyncCacheCreated();
+
+            if (PhotonNetwork.IsMasterClient)
+            {
+                if (!_hasPushedForRoom)
+                {
+                    PushCurrentConfigToCache();
+                    _hasPushedForRoom = true;
+                }
+                else
+                {
+                    SuperEnergy.Logger.LogInfo("房主已推送过当前房间配置。");
+                }
+            }
+            else
+            {
+                if (_syncState == SyncState.Received)
+                {
+                    SuperEnergy.Logger.LogInfo("客户端已收到配置，无需重复请求。");
+                    return;
+                }
+
+                if (_syncState == SyncState.WaitingForHost)
+                {
+                    if (Time.realtimeSinceStartup - _syncWaitStartTime >= SYNC_TIMEOUT_SECONDS)
+                    {
+                        SuperEnergy.Logger.LogWarning("等待房主配置超时，切换至本地配置。");
+                        _syncState = SyncState.TimedOut;
+                    }
+                    else
+                    {
+                        SuperEnergy.Logger.LogInfo("客户端正在等待房主配置。");
+                        return;
+                    }
+                }
+
+                RequestConfigFromHost();
+                _syncState = SyncState.WaitingForHost;
+                _syncWaitStartTime = Time.realtimeSinceStartup;
+            }
         }
 
         private void EnsureSyncCacheCreated()
         {
-            if (_syncCache != null) return;
+            if (_syncCache != null)
+                return;
 
-            // 复用已有缓存
-            var existing = CacheManager.GetCache<string, StaminaSyncConfig>(SYNC_CACHE_NAME);
-            if (existing != null)
+            // 调用 GetOrCreateSyncCache 会触发 SyncManager 的实例化和 EnsureReady
+            ICacheProvider<string, StaminaSyncConfig>? existing = CacheManager.GetCache<string, StaminaSyncConfig>(SYNC_CACHE_NAME);
+            if (existing != null && existing is ISyncCache<string, StaminaSyncConfig> syncCache)
             {
-                _syncCache = (ISyncCache<string, StaminaSyncConfig>)existing;
+                _syncCache = syncCache;
                 _localVersion = Convert.ToInt32(_syncCache.Version ?? 0);
-                _syncCache.OnDataChanged += OnSyncDataChanged; // 重订阅
-                SuperEnergy.Logger.LogInfo($"同步缓存已存在，版本 {_localVersion}。");
+                SubscribeToSyncEvents();
+                SuperEnergy.Logger.LogInfo($"复用已有同步缓存，版本 {_localVersion}。");
                 return;
             }
 
-            // 创建新缓存
             _syncCache = CacheManager.GetOrCreateSyncCache<string, StaminaSyncConfig>(
                 SYNC_CACHE_NAME,
                 SyncMode.HostAuthority,
                 serialize: (BinaryWriter w, StaminaSyncConfig c) => c.Write(w),
                 deserialize: (BinaryReader r) => StaminaSyncConfig.Read(r)
             );
-            _syncCache.OnDataChanged += OnSyncDataChanged;
-
             _localVersion = Convert.ToInt32(_syncCache.Version ?? 0);
-            SuperEnergy.Logger.LogInfo($"同步缓存已创建，初始版本 {_localVersion}。");
+            SubscribeToSyncEvents();
+            SuperEnergy.Logger.LogInfo($"同步缓存已创建，版本 {_localVersion}。");
+        }
+
+        private void SubscribeToSyncEvents()
+        {
+            if (_syncCache == null || _hasSubscribedToDataChanged)
+                return;
+
+            _syncCache.OnDataChanged += OnSyncDataChanged;
+            _hasSubscribedToDataChanged = true;
+        }
+
+        private void UnsubscribeFromSyncEvents()
+        {
+            if (_syncCache != null && _hasSubscribedToDataChanged)
+            {
+                _syncCache.OnDataChanged -= OnSyncDataChanged;
+                _hasSubscribedToDataChanged = false;
+            }
+        }
+
+        private void OnSyncDataChanged(string key, StaminaSyncConfig config)
+        {
+            _localVersion = Convert.ToInt32(_syncCache?.Version ?? 0);
+
+            if (!PhotonNetwork.IsMasterClient)
+            {
+                SuperEnergy.Logger.LogInfo($"收到房主配置：体力={config.Percent}%，滑铲={config.SlideBoostPercent}%，版本={_localVersion}");
+                _syncState = SyncState.Received;
+                _syncWaitStartTime = 0f;
+            }
+            else
+            {
+                SuperEnergy.Logger.LogInfo($"房主本地配置更新，版本 {_localVersion}");
+            }
         }
 
         private void PushCurrentConfigToCache()
         {
-            if (_syncCache == null) return;
+            if (_syncCache == null)
+                return;
 
             SuperEnergyConfig config = SuperEnergyConfig.Instance;
-
             StaminaSyncConfig syncConfig = new StaminaSyncConfig(
                 config.StaminaBoostPercent.Value,
                 config.StaminaBoostCompensateWhenDisabled.Value,
@@ -193,24 +246,32 @@ namespace SuperEnergy
             _syncCache.Version = _localVersion;
             _syncCache.Set(SYNC_CACHE_KEY, syncConfig);
 
-            _hasPushedForRoom = true;
-
             SuperEnergy.Logger.LogInfo($"房主推送配置：体力={syncConfig.Percent}%，滑铲={syncConfig.SlideBoostPercent}%，版本={_localVersion}");
         }
 
-        private void OnSyncDataChanged(string key, StaminaSyncConfig config)
+        private void RequestConfigFromHost()
         {
-            _localVersion = Convert.ToInt32(_syncCache?.Version ?? 0);
-
-            if (PhotonNetwork.IsMasterClient)
+            if (!PhotonNetwork.InRoom || PhotonNetwork.IsMasterClient)
             {
+                SuperEnergy.Logger.LogWarning("请求配置失败：未在房间中或是房主。");
                 return;
             }
 
-            SuperEnergy.Logger.LogInfo($"收到房主配置更新：体力={config.Percent}%，滑铲={config.SlideBoostPercent}%，版本={_localVersion}");
-            _hasReceivedSyncData = true;
-            _isWaitingForSync = false;
-            _hasRequestedAndTimedOut = false;
+            if (_syncCache == null)
+                EnsureSyncCacheCreated();
+
+            _syncCache?.RequestFullUpdate(_localVersion);
+            SuperEnergy.Logger.LogInfo($"已向房主请求配置，当前版本 {_localVersion}。");
+        }
+
+        private void ResetRoomState()
+        {
+            _syncState = SyncState.None;
+            _syncWaitStartTime = 0f;
+            _hasPushedForRoom = false;
+            _localVersion = 0;
+            _currentRoomIdentifier = "";
+            SuperEnergy.Logger.LogInfo("房间状态已重置。");
         }
 
         public StaminaSyncConfig GetEffectiveConfig()
@@ -224,36 +285,14 @@ namespace SuperEnergy
                 return BuildFromLocalConfig(config);
             }
 
-            if (_hasReceivedSyncData && _syncCache != null)
+            if (_syncState == SyncState.Received && _syncCache != null)
             {
-                if (_syncCache.TryGet(SYNC_CACHE_KEY, out StaminaSyncConfig? cached))
+                if (_syncCache.TryGet(SYNC_CACHE_KEY, out StaminaSyncConfig? cached) && cached != null)
                 {
                     return cached;
                 }
-                SuperEnergy.Logger.LogWarning("同步缓存丢失，降级到本地配置。");
-                return BuildFromLocalConfig(config);
-            }
-
-            if (_hasRequestedAndTimedOut)
-            {
-                return BuildFromLocalConfig(config);
-            }
-
-            if (!_isWaitingForSync)
-            {
-                _isWaitingForSync = true;
-                _syncWaitStartTime = Time.realtimeSinceStartup;
-                RequestConfigFromHost();
-                SuperEnergy.Logger.LogInfo("请求房主配置，等待响应...");
-                return BuildFromLocalConfig(config);
-            }
-
-            if (Time.realtimeSinceStartup - _syncWaitStartTime >= SYNC_TIMEOUT_SECONDS)
-            {
-                SuperEnergy.Logger.LogWarning($"超过 {SYNC_TIMEOUT_SECONDS} 秒未收到房主配置，降级到本地配置。");
-                _hasRequestedAndTimedOut = true;
-                _isWaitingForSync = false;
-                return BuildFromLocalConfig(config);
+                SuperEnergy.Logger.LogWarning("同步缓存丢失，降级本地。");
+                _syncState = SyncState.None;
             }
 
             return BuildFromLocalConfig(config);
@@ -269,95 +308,35 @@ namespace SuperEnergy
             );
         }
 
-        private void RequestConfigFromHost()
-        {
-            if (!PhotonNetwork.IsConnectedAndReady || !PhotonNetwork.InRoom)
-            {
-                SuperEnergy.Logger.LogWarning("请求配置失败：网络未就绪或不在房间内。");
-                return;
-            }
-
-            if (PhotonNetwork.IsMasterClient)
-            {
-                SuperEnergy.Logger.LogWarning("房主不应请求配置。");
-                return;
-            }
-
-            if (_syncCache == null)
-            {
-                EnsureSyncCacheCreated();
-            }
-
-            _syncCache?.RequestFullUpdate(_localVersion);
-            SuperEnergy.Logger.LogInfo($"已向房主发送配置请求，当前版本 {_localVersion}。");
-        }
-
         public void OnConfigSettingChanged(object sender, BepInEx.Configuration.SettingChangedEventArgs e)
         {
             string key = e.ChangedSetting.Definition.Key;
-            object? newValue = e.ChangedSetting.BoxedValue;
-            SuperEnergy.Logger.LogInfo($"配置变更触发：{key} = {newValue}");
+            SuperEnergy.Logger.LogInfo($"配置变更：{key} = {e.ChangedSetting.BoxedValue}");
 
             if (key == "SyncUseHostConfig")
             {
-                bool newValueBool = SuperEnergyConfig.Instance.SyncUseHostConfig.Value;
-                SuperEnergy.Logger.LogInfo($"SyncUseHostConfig 变更为：{newValueBool}");
+                bool newValue = SuperEnergyConfig.Instance.SyncUseHostConfig.Value;
+                SuperEnergy.Logger.LogInfo($"SyncUseHostConfig 变更为 {newValue}");
 
-                if (newValueBool)
+                if (newValue)
                 {
-                    if (PhotonNetwork.IsConnected && PhotonNetwork.InRoom && SemiFunc.RunIsLevel())
-                    {
-                        if (PhotonNetwork.IsMasterClient)
-                        {
-                            SuperEnergy.Logger.LogInfo("房主同步已启用，强制推送当前配置");
-                            EnsureSyncCacheCreated();
-                            PushCurrentConfigToCache();
-                        }
-                        else
-                        {
-                            SuperEnergy.Logger.LogInfo("客户端同步已启用，请求房主配置");
-                            _hasReceivedSyncData = false;
-                            _isWaitingForSync = false;
-                            _hasRequestedAndTimedOut = false;
-                            EnsureSyncCacheCreated();
-                            RequestConfigFromHost();
-                        }
-                    }
-                    else
-                    {
-                        SuperEnergy.Logger.LogInfo($"同步启用但网络未就绪或不在关卡：连接={PhotonNetwork.IsConnected}，在房间={PhotonNetwork.InRoom}，关卡加载={SemiFunc.RunIsLevel()}");
-                    }
+                    ResetRoomState();
+                    TryInitializeSyncForCurrentRoom();
                 }
                 else
                 {
-                    SuperEnergy.Logger.LogInfo("同步已禁用，重置客户端状态");
-                    _isWaitingForSync = false;
-                    _hasReceivedSyncData = false;
-                    _hasRequestedAndTimedOut = false;
+                    ResetRoomState();
+                    SuperEnergy.Logger.LogInfo("同步已禁用，使用本地配置。");
                 }
                 return;
             }
 
             bool useHost = SuperEnergyConfig.Instance.SyncUseHostConfig.Value;
-            bool isLevel = SemiFunc.RunIsLevel();
-            if (useHost && PhotonNetwork.IsMasterClient && isLevel && PhotonNetwork.InRoom)
+            if (useHost && PhotonNetwork.IsMasterClient && SemiFunc.RunIsLevel() && PhotonNetwork.InRoom)
             {
-                SuperEnergy.Logger.LogInfo($"配置变更 {key}，房主推送新配置");
                 EnsureSyncCacheCreated();
                 PushCurrentConfigToCache();
             }
-            else
-            {
-                SuperEnergy.Logger.LogInfo($"配置变更 {key}，但条件不满足推送：同步启用={useHost}，是房主={PhotonNetwork.IsMasterClient}，关卡加载={isLevel}，在房间={PhotonNetwork.InRoom}");
-            }
         }
-
-        [Obsolete("请使用 Instance.GetEffectiveConfig()")]
-        public static bool TryGetEffectiveConfig(out StaminaSyncConfig? config)
-        {
-            config = Instance.GetEffectiveConfig();
-            return true;
-        }
-
     }
 }

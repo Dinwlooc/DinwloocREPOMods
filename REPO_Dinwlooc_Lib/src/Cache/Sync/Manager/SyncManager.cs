@@ -50,13 +50,20 @@ namespace Dinwlooc.Common.Sync
             _instance = this;
             DontDestroyOnLoad(gameObject);
 
-            // 订阅场景变化事件（用于广播缓存）
+            // 订阅内部事件
             EventBus.Subscribe<SceneChangedEvent>(OnSceneChanged);
-            // 订阅自定义请求事件（房主处理客户端请求）
             EventBus.Subscribe<CustomRequestEvent>(OnCustomRequestReceived);
-            // 订阅自定义响应事件（客户端可接收响应，但本模组不直接处理）
             EventBus.Subscribe<CustomResponseEvent>(OnCustomResponseReceived);
             _ = SceneEventGenerator.Instance;
+
+            // 注册 Photon 回调（安全，不触发网络动作）
+            PhotonNetwork.AddCallbackTarget(this);
+
+            // 检查是否已加入房间（若是则立即发布 NetworkReadyEvent）
+            if (PhotonNetwork.InRoom)
+            {
+                HandleJoinedRoom();
+            }
         }
 
         private void OnDestroy()
@@ -64,54 +71,45 @@ namespace Dinwlooc.Common.Sync
             EventBus.Unsubscribe<SceneChangedEvent>(OnSceneChanged);
             EventBus.Unsubscribe<CustomRequestEvent>(OnCustomRequestReceived);
             EventBus.Unsubscribe<CustomResponseEvent>(OnCustomResponseReceived);
+            PhotonNetwork.RemoveCallbackTarget(this);
         }
 
-        private void TryInitializeState()
+        /// <summary>
+        /// 确保网络就绪：如果当前已在房间内且尚未发布事件，则立即发布。
+        /// 由 CreateSyncCache 在首次创建同步缓存时调用，以确保在 SyncManager 懒加载后也能正确处理。
+        /// </summary>
+        public void EnsureReady()
         {
-            if (_isNetworkReady) return;
+            if (_isNetworkReady)
+                return;
 
-            if (PhotonNetwork.IsConnectedAndReady && PhotonNetwork.InRoom)
+            if (PhotonNetwork.InRoom)
             {
                 HandleJoinedRoom();
-            }
-            else
-            {
-                Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 实例已创建，当前未在房间内，等待 OnJoinedRoom。");
             }
         }
 
         private void TryBroadcastIfNeeded()
         {
             if (!_isNetworkReady)
-            {
-                // Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 网络未就绪，跳过广播尝试。");
                 return;
-            }
 
             if (!PhotonNetwork.IsMasterClient)
-            {
-                // Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 非房主，跳过广播尝试。");
                 return;
-            }
 
             if (_hasBroadcastedForRoom)
-            {
-                // Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 当前房间已广播过，跳过。");
                 return;
-            }
+
             Scene currentScene = SceneManager.GetActiveScene();
             SceneType type = SceneEventGenerator.DetermineSceneType(currentScene);
             if (type == SceneType.MainMenu || type == SceneType.Unknown)
-            {
                 return;
-            }
+
             BroadcastAllCachesToAll();
             _hasBroadcastedForRoom = true;
             Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 首次进入有效场景 {currentScene.name}，已广播所有缓存。");
         }
 
-
-        // ---------- Photon 回调 ----------
         public override void OnJoinedRoom()
         {
             HandleJoinedRoom();
@@ -127,7 +125,7 @@ namespace Dinwlooc.Common.Sync
 
             _isNetworkReady = true;
             _hasBroadcastedForRoom = false;
-            Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 已加入房间，网络就绪。");
+            Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 网络就绪（加入房间）。");
 
             EventBus.Publish(new NetworkReadyEvent());
         }
@@ -183,10 +181,8 @@ namespace Dinwlooc.Common.Sync
             TryBroadcastIfNeeded();
         }
 
-        // ---------- 自定义请求/响应处理 ----------
         private void OnCustomRequestReceived(CustomRequestEvent evt)
         {
-            // 仅房主处理请求
             if (!PhotonNetwork.IsMasterClient)
                 return;
 
@@ -224,7 +220,6 @@ namespace Dinwlooc.Common.Sync
                 ["version"] = currentVersion ?? 0
             };
 
-            // 根据序列化策略发送快照
             if (cache.UseBinarySerialization && cache.TryGetSnapshotBinary(out Dictionary<object, byte[]> binarySnapshot))
             {
                 response["binarySnapshot"] = binarySnapshot;
@@ -245,7 +240,6 @@ namespace Dinwlooc.Common.Sync
             SyncRpcModule.SendCustomResponse(evt.SenderActor, response);
         }
 
-        // 客户端收到响应的处理（通常不需要，但保留以防扩展）
         private void OnCustomResponseReceived(CustomResponseEvent evt)
         {
             if (evt.Data is not PhotonHashtable data)
@@ -286,7 +280,6 @@ namespace Dinwlooc.Common.Sync
             }
         }
 
-        // ---------- 快照广播 ----------
         private void SendAllCachesToPlayer(Player targetPlayer)
         {
             ISyncCache[] allCaches = CacheManager.GetAllSyncCaches();
@@ -325,7 +318,6 @@ namespace Dinwlooc.Common.Sync
             Core.CommonPlugin.Logger.LogInfo($"{LOG_TAG} 已广播所有缓存快照给所有客户端。");
         }
 
-        // ---------- 远程操作应用（由 SyncRpcModule 调用） ----------
         internal void ApplyRemoteSet(string cacheName, object key, object value)
         {
             ISyncCache? cache = FindCacheByName(cacheName);
@@ -369,7 +361,6 @@ namespace Dinwlooc.Common.Sync
             return null;
         }
 
-        // ---------- 统一处理 RPC 操作（由 SyncRpcModule 调用） ----------
         internal void HandleRpcOperation(RpcMessage.SubOpCode op, string cacheName, object? key, object? value, int senderActor)
         {
             switch (op)
@@ -408,7 +399,6 @@ namespace Dinwlooc.Common.Sync
                     break;
                 case RpcMessage.SubOpCode.CustomRequest:
                 case RpcMessage.SubOpCode.CustomRequestBinary:
-                    // 通过事件发布，由 OnCustomRequestReceived 处理
                     EventBus.Publish(new CustomRequestEvent(value!, senderActor));
                     break;
                 case RpcMessage.SubOpCode.CustomResponse:
@@ -438,6 +428,7 @@ namespace Dinwlooc.Common.Sync
             foreach (var kv in snapshot)
                 cache.ApplyRemoteSetBinary(kv.Key, kv.Value);
         }
+
         internal ISyncCache<TKey, TValue> CreateSyncCache<TKey, TValue>(
             string cacheName,
             SyncMode mode,
@@ -447,10 +438,12 @@ namespace Dinwlooc.Common.Sync
             bool allowFullUpdateRequest = true)
             where TKey : notnull
         {
+            // 确保网络就绪（如果已经加入房间则立即发布事件，否则等待 OnJoinedRoom）
+            EnsureReady();
+
             SyncCache<TKey, TValue> newCache = new SyncCache<TKey, TValue>(
                 cacheName, mode, mergeFunc, serialize, deserialize, allowFullUpdateRequest);
 
-            // 事件绑定
             newCache.OnDataChanged += (key, value) =>
             {
                 if (!_isNetworkReady) return;
