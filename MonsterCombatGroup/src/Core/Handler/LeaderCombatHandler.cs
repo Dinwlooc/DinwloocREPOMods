@@ -10,6 +10,7 @@ namespace MonsterCombatGroup.Handler
 {
     /// <summary>
     /// 领队指挥状态管理：锁定玩家、定时召集攻击、追击次数管理。
+    /// 仅在月相 2 及以上生效。
     /// </summary>
     public class LeaderCombatHandler : ICombatHandler, IResettable
     {
@@ -20,6 +21,7 @@ namespace MonsterCombatGroup.Handler
         private readonly IEnemyBridge _enemyBridge;
         private readonly IEnemyModifierBridge? _modifier;
         private readonly IGameStateBridge _gameState;
+        private readonly IItemBridge _itemBridge;
 
         private PlayerAvatar? _lockedTarget;
         private int _attackCountRemaining;
@@ -28,7 +30,7 @@ namespace MonsterCombatGroup.Handler
 
         public LeaderCombatHandler()
         {
-            var cfg = MonsterCombatGroupConfig.Instance;
+            MonsterCombatGroupConfig cfg = MonsterCombatGroupConfig.Instance;
             _enabled = cfg.EnableLeaderMechanic.Value;
             _commandInterval = cfg.CommandInterval.Value;
             _maxAttackCount = cfg.CommandAttackCount.Value;
@@ -36,6 +38,7 @@ namespace MonsterCombatGroup.Handler
             _enemyBridge = BridgeLocator.Enemy;
             _modifier = BridgeLocator.Get<IEnemyModifierBridge>();
             _gameState = BridgeLocator.GameState;
+            _itemBridge = BridgeLocator.Item;
 
             if (_modifier == null)
                 MonsterCombatGroup.Logger.LogWarning("IEnemyModifierBridge 未注册，指挥攻击功能降级。");
@@ -52,7 +55,14 @@ namespace MonsterCombatGroup.Handler
             if (!SemiFunc.IsMasterClientOrSingleplayer()) return;
             if (_gameState.IsMainMenu() || !_gameState.IsLevelLoaded()) return;
 
-            // 检查领队是否存在
+            // 月相检查：仅月相 >= 2 时启用指挥
+            int moonLevel = BridgeLocator.Moon.GetCurrentMoonLevel();
+            if (moonLevel < 2)
+            {
+                if (LeaderState.IsCommanding) EndCommand();
+                return;
+            }
+
             if (!LeaderState.HasLeader)
             {
                 if (LeaderState.IsCommanding) EndCommand();
@@ -66,21 +76,18 @@ namespace MonsterCombatGroup.Handler
                 return;
             }
 
-            // 如果锁定目标死亡或无效，结束指挥
             if (_lockedTarget != null && _lockedTarget.isDisabled)
             {
                 EndCommand();
                 return;
             }
 
-            // 检查攻击次数
             if (LeaderState.IsCommanding && _attackCountRemaining <= 0)
             {
                 EndCommand();
                 return;
             }
 
-            // 定时召集攻击
             if (LeaderState.IsCommanding && _attackCountRemaining > 0)
             {
                 if (Time.time >= _nextCommandTime)
@@ -96,11 +103,9 @@ namespace MonsterCombatGroup.Handler
             if (!_enabled) return;
             if (!SemiFunc.IsMasterClientOrSingleplayer()) return;
 
-            // 仅领队的视觉事件触发锁定
             int id = evt.InstanceId;
             if (!LeaderState.IsLeader(id)) return;
 
-            // 如果已在指挥状态且有目标，不重新锁定
             if (LeaderState.IsCommanding && _lockedTarget != null) return;
 
             EnemyParent? leader = GetEnemyParentById(id);
@@ -116,7 +121,6 @@ namespace MonsterCombatGroup.Handler
 
         private void OnEnemyDied(EnemyDiedEvent evt)
         {
-            // 如果领队死亡，结束指挥
             int id = evt.InstanceId;
             if (LeaderState.IsLeader(id))
             {
@@ -151,13 +155,23 @@ namespace MonsterCombatGroup.Handler
                 return;
             }
 
-            // 选择一名普通怪物（非领队、非护卫）
+            // ---- 月相 2 特有：扣除锁定目标 25% 电量 ----
+            ItemBattery? battery = _itemBridge.GetHeldItemBattery(_lockedTarget);
+            if (battery != null)
+            {
+                float currentLife = battery.batteryLife;
+                float newLife = Mathf.Max(0f, currentLife - 25f);
+                int newLifePercent = Mathf.RoundToInt(newLife);
+                if (newLifePercent < 0) newLifePercent = 0;
+                battery.SetBatteryLife(newLifePercent);
+            }
+
+            // ---- 原有召集攻击逻辑 ----
             EnemyParent? selected = SelectRandomMonster();
             List<EnemyParent> attackers = new List<EnemyParent>();
             if (selected != null)
                 attackers.Add(selected);
 
-            // 加入所有存活护卫
             foreach (int guardId in LeaderState.GuardInstanceIds)
             {
                 EnemyParent? guard = GetEnemyParentById(guardId);
@@ -171,7 +185,6 @@ namespace MonsterCombatGroup.Handler
                 return;
             }
 
-            // 命令所有攻击者追击目标
             foreach (EnemyParent attacker in attackers)
             {
                 if (_modifier != null)

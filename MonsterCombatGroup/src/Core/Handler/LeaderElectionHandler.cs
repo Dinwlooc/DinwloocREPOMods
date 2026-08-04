@@ -22,7 +22,6 @@ namespace MonsterCombatGroup.Handler
         private readonly Dictionary<int, int> _baseHealthCache = new Dictionary<int, int>();
         private bool _subscribed = false;
 
-        // 上次选举成功的时间戳（用于全局冷却）
         private float _lastElectionTime = -float.MaxValue;
 
         public LeaderElectionHandler()
@@ -54,18 +53,20 @@ namespace MonsterCombatGroup.Handler
             if (!SemiFunc.IsMasterClientOrSingleplayer()) return;
             if (_gameState.IsMainMenu() || !_gameState.IsLevelLoaded()) return;
 
-            // 只有在没有领队时才尝试选举
             if (!LeaderState.HasLeader)
                 TryElectLeader();
         }
 
         private void TryElectLeader()
         {
-            // 检查领队死亡冷却（LeaderState 管理）
+            // 月相检查：仅当月相等级 >= 1 时允许选举
+            int moonLevel = BridgeLocator.Moon.GetCurrentMoonLevel();
+            if (moonLevel < 1)
+                return;
+
             if (!LeaderState.IsCooldownElapsed(_electionCooldown))
                 return;
 
-            // 检查全局选举冷却（防止连续选举）
             float timeSinceLastElection = Time.time - _lastElectionTime;
             if (timeSinceLastElection < _electionCooldown)
             {
@@ -100,7 +101,6 @@ namespace MonsterCombatGroup.Handler
             LeaderState.AddGuard(guard1Id);
             LeaderState.AddGuard(guard2Id);
 
-            // 计算新最大血量
             int baseHealthLeader = GetBaseHealth(leader);
             int baseHealthGuard1 = GetBaseHealth(guard1);
             int baseHealthGuard2 = GetBaseHealth(guard2);
@@ -109,12 +109,10 @@ namespace MonsterCombatGroup.Handler
             int newMaxGuard1 = (int)(baseHealthGuard1 * _guardHealthMult);
             int newMaxGuard2 = (int)(baseHealthGuard2 * _guardHealthMult);
 
-            // 同步最大血量到所有客户端（房主调用）
             MonsterSyncManager.UpdateMonsterMaxHealth(leader, newMaxLeader);
             MonsterSyncManager.UpdateMonsterMaxHealth(guard1, newMaxGuard1);
             MonsterSyncManager.UpdateMonsterMaxHealth(guard2, newMaxGuard2);
 
-            // 设置当前血量（满血），由房主本地执行，游戏网络同步会传达当前血量
             if (_modifier != null)
             {
                 _modifier.SetHealth(leader, newMaxLeader);
@@ -122,7 +120,6 @@ namespace MonsterCombatGroup.Handler
                 _modifier.SetHealth(guard2, newMaxGuard2);
             }
 
-            // 记录选举成功时间
             _lastElectionTime = Time.time;
             MonsterCombatGroup.Logger.LogInfo($"选举领队 {leaderId}，护卫 {guard1Id}, {guard2Id}，冷却 {_electionCooldown}s");
         }
@@ -178,7 +175,6 @@ namespace MonsterCombatGroup.Handler
         }
 
         private void OnEnemySpawned(EnemySpawnedEvent evt) => TryElectLeader();
-
         private void OnEnemyDied(EnemyDiedEvent evt)
         {
             int id = evt.InstanceId;
@@ -186,7 +182,6 @@ namespace MonsterCombatGroup.Handler
             LeaderState.ClearRole(id);
             TryElectLeader();
         }
-
         private void OnEnemyDespawn(EnemyDespawnEvent evt)
         {
             int id = evt.InstanceId;
@@ -197,7 +192,6 @@ namespace MonsterCombatGroup.Handler
 
         public void ResetState()
         {
-            // 恢复所有缓存怪物的血量
             if (_modifier != null)
             {
                 IReadOnlyList<EnemyParent> allEnemies = _enemyBridge.GetAllEnemies();

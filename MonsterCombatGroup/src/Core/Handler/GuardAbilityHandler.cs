@@ -11,20 +11,18 @@ namespace MonsterCombatGroup.Handler
     public class GuardAbilityHandler : ICombatHandler, IResettable
     {
         private readonly bool _enabled;
-        private readonly float _immunityDuration;
-        private readonly bool _enableStunRecovery;
-
         private readonly IEnemyBridge _enemyBridge;
         private readonly IEnemyModifierBridge? _modifier;
         private readonly IGameStateBridge _gameState;
-        private bool _subscribed = false;
+
+        private readonly Dictionary<int, EnemyParent> _enemyCache = new Dictionary<int, EnemyParent>();
+        private float _nextCacheRefreshTime = 0f;
+        private const float CACHE_REFRESH_INTERVAL = 0.5f;
 
         public GuardAbilityHandler()
         {
-            var cfg = MonsterCombatGroupConfig.Instance;
+            MonsterCombatGroupConfig cfg = MonsterCombatGroupConfig.Instance;
             _enabled = cfg.EnableLeaderMechanic.Value;
-            _immunityDuration = cfg.StunImmunityDuration.Value;
-            _enableStunRecovery = cfg.EnableGuardStunRecoveryOnHurt.Value;
 
             _enemyBridge = BridgeLocator.Enemy;
             _modifier = BridgeLocator.Get<IEnemyModifierBridge>();
@@ -33,9 +31,7 @@ namespace MonsterCombatGroup.Handler
             if (_modifier == null)
                 MonsterCombatGroup.Logger.LogWarning("IEnemyModifierBridge 未注册，护卫能力降级。");
 
-            EventBus.Subscribe<EnemyHurtEvent>(OnEnemyHurt);
-            _subscribed = true;
-            MonsterCombatGroup.Logger.LogInfo("GuardAbilityHandler 已初始化。");
+            MonsterCombatGroup.Logger.LogInfo("GuardAbilityHandler 已初始化（守卫受击逻辑已整合）。");
         }
 
         public void Process(float deltaTime)
@@ -44,6 +40,13 @@ namespace MonsterCombatGroup.Handler
             if (!SemiFunc.IsMasterClientOrSingleplayer()) return;
             if (_gameState.IsMainMenu() || !_gameState.IsLevelLoaded()) return;
 
+            if (Time.time >= _nextCacheRefreshTime)
+            {
+                _nextCacheRefreshTime = Time.time + CACHE_REFRESH_INTERVAL;
+                RefreshEnemyCache();
+            }
+
+            // 协同追击
             if (!LeaderState.HasLeader) return;
 
             EnemyParent? leaderParent = GetEnemyParentById(LeaderState.LeaderInstanceId);
@@ -77,23 +80,55 @@ namespace MonsterCombatGroup.Handler
             }
         }
 
-        private void OnEnemyHurt(EnemyHurtEvent evt)
+        private void RefreshEnemyCache()
+        {
+            _enemyCache.Clear();
+            IReadOnlyList<EnemyParent> allEnemies = _enemyBridge.GetAllEnemies();
+            if (allEnemies == null) return;
+            foreach (EnemyParent ep in allEnemies)
+            {
+                if (ep != null)
+                {
+                    int id = ep.GetInstanceID();
+                    _enemyCache[id] = ep;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 处理守卫受击（由分发器调用）。
+        /// </summary>
+        public void HandleHurt(int instanceId, int moonLevel)
         {
             if (!_enabled) return;
-            if (!_enableStunRecovery) return;
             if (!SemiFunc.IsMasterClientOrSingleplayer()) return;
 
-            int id = evt.InstanceId;
-            if (!LeaderState.IsGuard(id)) return;
+            if (!_enemyCache.TryGetValue(instanceId, out EnemyParent? enemy))
+                return;
 
-            if (_modifier == null) return;
+            MoonPhaseResistConfig.ResistParams p = MoonPhaseResistConfig.GetGuardParams(moonLevel);
+            if (p.NormalDuration <= 0f && p.StrongDuration <= 0f)
+                return;
 
-            EnemyParent? guard = GetEnemyParentById(id);
-            if (guard == null) return;
+            bool triggered = ResistanceManager.ProcessResist(enemy, instanceId, p.StrongDuration, p.NormalDuration, p.Cooldown, _modifier);
 
-            _modifier.ResetStun(guard);
-            if (_immunityDuration > 0f)
-                _modifier.ApplyStunImmunity(guard, _immunityDuration);
+            // 月相二：如果触发了完整效果，刷新另一位守卫的冷却
+            if (triggered && moonLevel >= 2)
+            {
+                int otherGuardId = -1;
+                foreach (int guardId in LeaderState.GuardInstanceIds)
+                {
+                    if (guardId != instanceId)
+                    {
+                        otherGuardId = guardId;
+                        break;
+                    }
+                }
+                if (otherGuardId != -1)
+                {
+                    ResistanceManager.RefreshCooldownForGuard(otherGuardId, p.Cooldown);
+                }
+            }
         }
 
         private EnemyParent? GetEnemyParentById(int instanceId)
@@ -108,15 +143,15 @@ namespace MonsterCombatGroup.Handler
             return null;
         }
 
-        public void ResetState() { }
+        public void ResetState()
+        {
+            _enemyCache.Clear();
+            _nextCacheRefreshTime = 0f;
+        }
 
         public void Dispose()
         {
-            if (_subscribed)
-            {
-                EventBus.Unsubscribe<EnemyHurtEvent>(OnEnemyHurt);
-                _subscribed = false;
-            }
+            _enemyCache.Clear();
         }
     }
 }

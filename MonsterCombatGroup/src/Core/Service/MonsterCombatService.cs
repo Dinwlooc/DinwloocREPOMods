@@ -19,6 +19,9 @@ namespace MonsterCombatGroup
         private bool _isInitialized = false;
         private bool _subscribed = false;
 
+        // 分发器持有引用（便于重置）
+        private CombatEventDispatcher? _dispatcher;
+
         private void Awake()
         {
             DontDestroyOnLoad(gameObject);
@@ -38,15 +41,27 @@ namespace MonsterCombatGroup
             EnemyEventGenerator.Instance.RegisterStep(5);
             MonsterCombatGroup.Logger.LogInfo("EnemyEventGenerator 已启动。");
 
-            _handlers.Add(new LeaderElectionHandler());
-            _handlers.Add(new LeaderAbilityHandler());
-            _handlers.Add(new GuardAbilityHandler());
-            _handlers.Add(new LeaderCombatHandler());
-            _handlers.Add(new LeaderDeathRewardHandler());
+            // ---- 创建所有处理器 ----
+            LeaderElectionHandler electionHandler = new LeaderElectionHandler();
+            LeaderAbilityHandler leaderHandler = new LeaderAbilityHandler();
+            GuardAbilityHandler guardHandler = new GuardAbilityHandler();
+            LeaderCombatHandler combatHandler = new LeaderCombatHandler();
+            LeaderDeathRewardHandler deathRewardHandler = new LeaderDeathRewardHandler();
+            NormalMonsterHandler normalHandler = new NormalMonsterHandler();
+
+            // 创建分发器（依赖 leaderHandler, guardHandler, normalHandler）
+            _dispatcher = new CombatEventDispatcher(leaderHandler, guardHandler, normalHandler);
+
+            // 将所有需要周期性 Process 的处理器加入列表
+            _handlers.Add(electionHandler);
+            _handlers.Add(leaderHandler);
+            _handlers.Add(guardHandler);
+            _handlers.Add(combatHandler);
+            _handlers.Add(deathRewardHandler);
+            // 注意：分发器不需要 Process，因此不加入 _handlers
 
             PhotonNetwork.AddCallbackTarget(this);
 
-            // 订阅场景切换事件
             if (!_subscribed)
             {
                 EventBus.Subscribe<SceneChangedEvent>(OnSceneChanged);
@@ -75,26 +90,22 @@ namespace MonsterCombatGroup
 
         private void OnSceneChanged(SceneChangedEvent evt)
         {
-            // 只在关卡或大厅场景重置（排除主菜单、商店、过渡场景等）
             if (evt.Type != SceneType.Level && evt.Type != SceneType.Lobby)
                 return;
             if (!SemiFunc.IsMasterClientOrSingleplayer())
                 return;
 
             MonsterCombatGroup.Logger.LogInfo($"场景切换：{evt.SceneName}，重置状态。");
+            // 重置所有处理器
             foreach (ICombatHandler handler in _handlers)
             {
                 if (handler is IResettable resettable)
                     resettable.ResetState();
             }
-
-            // 清空同步缓存（房主）
             MonsterSyncManager.ClearState();
-
-            // 所有客户端（包括房主）在进入关卡时初始化同步缓存
-            // 这会触发 CacheManager.GetOrCreateSyncCache，自动处理网络就绪和全量同步
             if (evt.Type == SceneType.Level)
             {
+                MoonPhaseManager.UpdateForCurrentMoon();
                 MonsterSyncManager.EnsureInitialized();
                 MonsterCombatGroup.Logger.LogInfo("MonsterSyncManager 已为当前关卡初始化。");
             }
@@ -107,6 +118,7 @@ namespace MonsterCombatGroup
                 if (handler is IResettable resettable)
                     resettable.ResetState();
             }
+            _dispatcher?.ResetState();
         }
 
         private void OnDestroy()
@@ -119,11 +131,12 @@ namespace MonsterCombatGroup
                     EventBus.Unsubscribe<SceneChangedEvent>(OnSceneChanged);
                     _subscribed = false;
                 }
+                _dispatcher?.Dispose();
                 _handlers.Clear();
                 _isInitialized = false;
             }
 
-            // 重置同步管理器
+            MoonPhaseManager.Reset();
             MonsterSyncManager.Reset();
         }
     }
