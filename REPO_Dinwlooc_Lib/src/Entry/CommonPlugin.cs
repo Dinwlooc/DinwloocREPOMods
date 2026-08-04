@@ -1,4 +1,4 @@
-// Dinwlooc.Common/Core/CommonPlugin.cs
+// 文件：Dinwlooc.Common.Core/CommonPlugin.cs
 using BepInEx;
 using BepInEx.Logging;
 using Dinwlooc.Common.Bridge;
@@ -12,37 +12,44 @@ namespace Dinwlooc.Common.Core
     [BepInDependency("nickklmao.menulib", BepInDependency.DependencyFlags.SoftDependency)]
     public class CommonPlugin : BaseUnityPlugin
     {
-        internal new static ManualLogSource Logger { get; private set; } = null!;
+        internal new static ManualLogSource Logger { get; private set; } = null;
 
         private void Awake()
         {
             Logger = base.Logger;
 
-            BridgeLocator.Register<IGameStateBridge>(CoreBridge.Instance);
-            BridgeLocator.Register<ISaveLoadBridge>(CoreBridge.Instance);
-            BridgeLocator.Register<INetworkBridge>(CoreBridge.Instance);
+            // ---- 核心桥接（懒加载工厂） ----
+            BridgeLocator.Register<IGameStateBridge>(() => CoreBridge.Instance);
+            BridgeLocator.Register<ISaveLoadBridge>(() => CoreBridge.Instance);
+            BridgeLocator.Register<INetworkBridge>(() => CoreBridge.Instance);
 
-            BridgeLocator.Register<IItemBridge>(ItemBridge.Instance);
-            BridgeLocator.Register<IHealthPackBridge>(ItemBridge.Instance);
+            // ---- 物品桥接 ----
+            BridgeLocator.Register<IItemBridge>(() => ItemBridge.Instance);
+            BridgeLocator.Register<IHealthPackBridge>(() => ItemBridge.Instance);
 
-            BridgeLocator.Register<IPlayerBridge>(PlayerBridge.Instance);
-            BridgeLocator.Register<IEnergyBridge>(PlayerBridge.Instance);
+            // ---- 玩家桥接 ----
+            BridgeLocator.Register<IPlayerBridge>(() => PlayerBridge.Instance);
+            BridgeLocator.Register<IEnergyBridge>(() => PlayerBridge.Instance);
 
-            BridgeLocator.Register<ITruckBridge>(TruckBridge.Instance);
-            BridgeLocator.Register<IUpgradeBridge>(UpgradeBridge.Instance);
-            BridgeLocator.Register<IEnemyBridge>(EnemyBridge.Instance);
-            BridgeLocator.Register<ISlideBridge>(SlideBridge.Instance);
-            BridgeLocator.Register<IMenuBridge>(MenuBridge.Instance);
-            BridgeLocator.Register<IEnemyModifierBridge>(EnemyModifierBridge.Instance);
-            BridgeLocator.Register<IMovementOverrideBridge>(MovementOverrideBridge.Instance);
-            // 挂载公共服务
-            GameObject go = new GameObject(nameof(CommonService));
-            DontDestroyOnLoad(go);
-            go.AddComponent<CommonService>();
+            // ---- 功能桥接 ----
+            BridgeLocator.Register<ITruckBridge>(() => TruckBridge.Instance);
+            BridgeLocator.Register<IUpgradeBridge>(() => UpgradeBridge.Instance);
+            BridgeLocator.Register<IEnemyBridge>(() => EnemyBridge.Instance);
+            BridgeLocator.Register<ISlideBridge>(() => SlideBridge.Instance);
+            BridgeLocator.Register<IMenuBridge>(() => MenuBridge.Instance);
+            BridgeLocator.Register<IEnemyModifierBridge>(() => EnemyModifierBridge.Instance);
+            BridgeLocator.Register<IMovementOverrideBridge>(() => MovementOverrideBridge.Instance);
 
-            // 不再创建 SyncNetworkManager
+            // ---- 月相桥接（懒加载） ----
+            BridgeLocator.Register<IMoonBridge>(() => MoonBridge.Instance);
+            BridgeLocator.Register<IMoonUIBridge>(() => MoonBridge.Instance);
 
-            Logger.LogInfo($"{PluginInfo.PLUGIN_NAME} v{PluginInfo.PLUGIN_VERSION} loaded.");
+            // ---- 公共服务挂载（MonoBehaviour 必须主动创建） ----
+            GameObject serviceObject = new GameObject(nameof(CommonService));
+            DontDestroyOnLoad(serviceObject);
+            serviceObject.AddComponent<CommonService>();
+
+            Logger.LogInfo(string.Format("{0} v{1} loaded.", PluginInfo.PLUGIN_NAME, PluginInfo.PLUGIN_VERSION));
         }
     }
 }
