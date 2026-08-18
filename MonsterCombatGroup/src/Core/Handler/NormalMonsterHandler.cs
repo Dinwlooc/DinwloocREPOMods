@@ -14,16 +14,12 @@ namespace MonsterCombatGroup.Handler
     {
         private readonly bool _enabled;
         private readonly IEnemyBridge _enemyBridge;
-        private readonly IEnemyModifierBridge? _modifier;
-
-        private readonly Dictionary<int, EnemyParent> _enemyCache = new Dictionary<int, EnemyParent>();
-        private float _nextCacheRefreshTime = 0f;
-        private const float CACHE_REFRESH_INTERVAL = 0.5f;
+        private readonly IEnemyModifierBridge _modifier;
 
         public NormalMonsterHandler()
         {
-            MonsterCombatGroupConfig cfg = MonsterCombatGroupConfig.Instance;
-            _enabled = cfg.EnableLeaderMechanic.Value;
+            MonsterCombatGroupConfig config = MonsterCombatGroupConfig.Instance;
+            _enabled = config.EnableLeaderMechanic.Value;
 
             _enemyBridge = BridgeLocator.Enemy;
             _modifier = BridgeLocator.Get<IEnemyModifierBridge>();
@@ -39,51 +35,40 @@ namespace MonsterCombatGroup.Handler
         /// </summary>
         public void HandleHurt(int instanceId, int moonLevel)
         {
-            if (!_enabled) return;
-            if (!SemiFunc.IsMasterClientOrSingleplayer()) return;
-            if (!LeaderState.HasLeader) return; // 仅在领队存在时生效
-
-            if (Time.time >= _nextCacheRefreshTime)
-            {
-                _nextCacheRefreshTime = Time.time + CACHE_REFRESH_INTERVAL;
-                RefreshCache();
-            }
-
-            if (!_enemyCache.TryGetValue(instanceId, out EnemyParent? enemy))
+            if (!_enabled)
                 return;
 
-            MoonPhaseResistConfig.ResistParams p = MoonPhaseResistConfig.GetNormalParams(moonLevel);
-            // 若配置无效（全部为0），则跳过
-            if (p.NormalDuration <= 0f && p.StrongDuration <= 0f)
+            if (!SemiFunc.IsMasterClientOrSingleplayer())
                 return;
 
-            ResistanceManager.ProcessResist(enemy, instanceId, p.StrongDuration, p.NormalDuration, p.Cooldown, _modifier);
-        }
+            if (!LeaderState.HasLeader) // 仅在领队存在时生效
+                return;
 
-        private void RefreshCache()
-        {
-            _enemyCache.Clear();
-            IReadOnlyList<EnemyParent> allEnemies = _enemyBridge.GetAllEnemies();
-            if (allEnemies == null) return;
-            foreach (EnemyParent ep in allEnemies)
-            {
-                if (ep != null)
-                {
-                    int id = ep.GetInstanceID();
-                    _enemyCache[id] = ep;
-                }
-            }
+            EnemyParent enemy = EnemyCacheService.GetEnemyById(instanceId);
+            if (enemy == null)
+                return;
+
+            MoonPhaseResistConfig.ResistParams parameters = MoonPhaseResistConfig.GetNormalParams(moonLevel);
+            if (parameters.NormalDuration <= 0f && parameters.StrongDuration <= 0f)
+                return;
+
+            ResistanceManager.ProcessResist(
+                enemy,
+                instanceId,
+                parameters.StrongDuration,
+                parameters.NormalDuration,
+                parameters.Cooldown,
+                _modifier);
         }
 
         public void ResetState()
         {
-            _enemyCache.Clear();
-            _nextCacheRefreshTime = 0f;
+            // 无需额外清理
         }
 
         public void Dispose()
         {
-            _enemyCache.Clear();
+            // 无需额外清理
         }
     }
 }

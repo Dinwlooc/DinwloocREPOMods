@@ -85,9 +85,38 @@ namespace Dinwlooc.Common.Core
         // ---------- 内部自动启用 / 禁用 ----------
         private static void AutoEnableGeneratorForEvent(Type eventType)
         {
+            // ----- 1. 检查该事件是否在轮询生成器注册表中 -----
+            // 若不在，说明该事件由内部逻辑主动发送，不需要任何生成器，直接返回。
             if (!EventGeneratorRegistry.EventToGeneratorFactory.TryGetValue(eventType, out Func<IEventGenerator> factory))
                 return;
 
+            // ----- 2. 判断是否需要 Hook 加速（配置启用且可用） -----
+            bool useHook = CommonPlugin.IsHookGenAvailable && CommonPlugin.UseHookAcceleration.Value;
+
+            if (useHook)
+            {
+                // 尝试从 Hook 注册表获取绑定器
+                bool hasBinder = HookAccelerationRegistry.TryBind(eventType, out bool boundSuccess);
+
+                if (hasBinder)
+                {
+                    if (boundSuccess)
+                    {
+                        // Hook 绑定成功，无需轮询生成器
+                        return;
+                    }
+
+                    // 绑定失败（未实现或执行异常），输出降级日志并继续轮询
+                    CommonPlugin.Logger.LogInfo(
+                        $"[EventBus] Hook acceleration failed for event '{eventType.Name}', falling back to polling generator. " +
+                        "Reason: Hook binder returned false (not implemented or error)."
+                    );
+                    // 继续执行下面的轮询创建逻辑
+                }
+                // else: 没有注册绑定器，直接走轮询（不输出日志）
+            }
+
+            // ----- 3. 回退到轮询生成器（创建或激活） -----
             IEventGenerator generator;
             lock (_generatorLock)
             {

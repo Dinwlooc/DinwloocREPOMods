@@ -15,12 +15,11 @@ namespace MonsterCombatGroup
 
         private readonly List<ICombatHandler> _handlers = new List<ICombatHandler>();
         private float _nextTickTime = 0f;
-        private IGameStateBridge? _gameState;
+        private IGameStateBridge _gameState;
         private bool _isInitialized = false;
         private bool _subscribed = false;
 
-        // 分发器持有引用（便于重置）
-        private CombatEventDispatcher? _dispatcher;
+        private CombatEventDispatcher _dispatcher;
 
         private void Awake()
         {
@@ -34,14 +33,15 @@ namespace MonsterCombatGroup
 
         private void Initialize()
         {
-            if (_isInitialized) return;
+            if (_isInitialized)
+                return;
 
             _gameState = BridgeLocator.GameState;
 
             EnemyEventGenerator.Instance.RegisterStep(5);
             MonsterCombatGroup.Logger.LogInfo("EnemyEventGenerator 已启动。");
 
-            // ---- 创建所有处理器 ----
+            // 创建所有处理器
             LeaderElectionHandler electionHandler = new LeaderElectionHandler();
             LeaderAbilityHandler leaderHandler = new LeaderAbilityHandler();
             GuardAbilityHandler guardHandler = new GuardAbilityHandler();
@@ -49,16 +49,16 @@ namespace MonsterCombatGroup
             LeaderDeathRewardHandler deathRewardHandler = new LeaderDeathRewardHandler();
             NormalMonsterHandler normalHandler = new NormalMonsterHandler();
 
-            // 创建分发器（依赖 leaderHandler, guardHandler, normalHandler）
+            // 分发器依赖 leaderHandler, guardHandler, normalHandler
             _dispatcher = new CombatEventDispatcher(leaderHandler, guardHandler, normalHandler);
 
-            // 将所有需要周期性 Process 的处理器加入列表
+            // 注册需要周期性 Process 的处理器
             _handlers.Add(electionHandler);
             _handlers.Add(leaderHandler);
             _handlers.Add(guardHandler);
             _handlers.Add(combatHandler);
             _handlers.Add(deathRewardHandler);
-            // 注意：分发器不需要 Process，因此不加入 _handlers
+            // 分发器不参与 Process，仅处理事件
 
             PhotonNetwork.AddCallbackTarget(this);
 
@@ -74,12 +74,24 @@ namespace MonsterCombatGroup
 
         private void Update()
         {
-            if (!_isInitialized) return;
-            if (_gameState == null) return;
-            if (_gameState.IsMainMenu() || !_gameState.IsLevelLoaded()) return;
-            if (!SemiFunc.IsMasterClientOrSingleplayer()) return;
+            if (!_isInitialized)
+                return;
 
-            if (Time.time < _nextTickTime) return;
+            if (_gameState == null)
+                return;
+
+            if (_gameState.IsMainMenu() || !_gameState.IsLevelLoaded())
+                return;
+
+            if (!SemiFunc.IsMasterClientOrSingleplayer())
+                return;
+
+            // 统一驱动敌人缓存刷新（仅房主）
+            EnemyCacheService.RefreshIfNeeded();
+
+            if (Time.time < _nextTickTime)
+                return;
+
             _nextTickTime = Time.time + TICK_INTERVAL;
 
             foreach (ICombatHandler handler in _handlers)
@@ -92,17 +104,23 @@ namespace MonsterCombatGroup
         {
             if (evt.Type != SceneType.Level && evt.Type != SceneType.Lobby)
                 return;
+
             if (!SemiFunc.IsMasterClientOrSingleplayer())
                 return;
 
             MonsterCombatGroup.Logger.LogInfo($"场景切换：{evt.SceneName}，重置状态。");
+
             // 重置所有处理器
             foreach (ICombatHandler handler in _handlers)
             {
                 if (handler is IResettable resettable)
                     resettable.ResetState();
             }
+
+            // 重置缓存服务
+            EnemyCacheService.Reset();
             MonsterSyncManager.ClearState();
+
             if (evt.Type == SceneType.Level)
             {
                 MoonPhaseManager.UpdateForCurrentMoon();
@@ -118,7 +136,9 @@ namespace MonsterCombatGroup
                 if (handler is IResettable resettable)
                     resettable.ResetState();
             }
+
             _dispatcher?.ResetState();
+            EnemyCacheService.Reset();
         }
 
         private void OnDestroy()
@@ -131,6 +151,7 @@ namespace MonsterCombatGroup
                     EventBus.Unsubscribe<SceneChangedEvent>(OnSceneChanged);
                     _subscribed = false;
                 }
+
                 _dispatcher?.Dispose();
                 _handlers.Clear();
                 _isInitialized = false;
@@ -138,6 +159,7 @@ namespace MonsterCombatGroup
 
             MoonPhaseManager.Reset();
             MonsterSyncManager.Reset();
+            EnemyCacheService.Reset();
         }
     }
 
